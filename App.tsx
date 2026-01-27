@@ -17,7 +17,6 @@ const App: React.FC = () => {
   const [view, setView] = useState<'dashboard' | 'rating' | 'leaderboard' | 'teams'>('dashboard');
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
-  const [lastSynced, setLastSynced] = useState<number>(Date.now());
 
   const [teams, setTeams] = useState<Team[]>(() => {
     const saved = localStorage.getItem('jamJudge_teams');
@@ -39,38 +38,54 @@ const App: React.FC = () => {
   const syncToCloud = useCallback(async (currentTeams: Team[], currentRatings: Rating[], currentJudges: string[]) => {
     if (!accessPhrase) return;
     setIsSyncing(true);
-    await SyncService.pushData(accessPhrase, {
-      teams: currentTeams,
-      ratings: currentRatings,
-      judges: currentJudges,
-      updatedAt: Date.now()
-    });
-    setIsSyncing(false);
-    setLastSynced(Date.now());
+    try {
+      await SyncService.pushData(accessPhrase, {
+        teams: currentTeams,
+        ratings: currentRatings,
+        judges: currentJudges,
+        updatedAt: Date.now()
+      });
+    } finally {
+      setIsSyncing(false);
+    }
   }, [accessPhrase]);
 
-  // Initial Load from Cloud
+  // Initial Load and Polling from Cloud
   useEffect(() => {
+    let isMounted = true;
+
     const loadCloudData = async () => {
-      if (accessPhrase) {
-        setIsSyncing(true);
-        const cloudData = await SyncService.pullData(accessPhrase);
-        if (cloudData) {
-          if (cloudData.teams) setTeams(cloudData.teams);
-          if (cloudData.ratings) setRatings(cloudData.ratings);
-          if (cloudData.judges) setKnownJudges(cloudData.judges);
+      if (!accessPhrase) return;
+      
+      setIsSyncing(true);
+      const cloudData = await SyncService.pullData(accessPhrase);
+      
+      if (isMounted && cloudData) {
+        // Only update if cloud data is newer or local is empty
+        if (cloudData.teams && cloudData.teams.length > 0) {
+           setTeams(cloudData.teams);
         }
-        setIsSyncing(false);
+        if (cloudData.ratings) setRatings(cloudData.ratings);
+        if (cloudData.judges) setKnownJudges(cloudData.judges);
+      } else if (isMounted && !cloudData && currentRole === 'organizer') {
+        // If cloud is empty and we are an organizer, initialize the cloud with our current (likely initial) teams
+        syncToCloud(teams, ratings, knownJudges);
       }
+      
+      if (isMounted) setIsSyncing(false);
     };
+
     loadCloudData();
     
-    // Set up polling for real-time peer updates (every 15 seconds)
-    const interval = setInterval(loadCloudData, 15000);
-    return () => clearInterval(interval);
-  }, [accessPhrase]);
+    // Polling for updates every 10 seconds
+    const interval = setInterval(loadCloudData, 10000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [accessPhrase, currentRole]);
 
-  // Sync to LocalStorage & Cloud on change
+  // Persistent Local Storage updates
   useEffect(() => {
     if (currentJudgeName) {
       localStorage.setItem('jamJudge_name', currentJudgeName);
@@ -87,11 +102,9 @@ const App: React.FC = () => {
     setCurrentRole(role);
     setAccessPhrase(phrase);
     
-    // Ensure judge is in known list
     if (role === 'judge') {
       setKnownJudges(prev => {
         const updated = Array.from(new Set([...prev, name]));
-        // Trigger push immediately on login to notify others
         syncToCloud(teams, ratings, updated);
         return updated;
       });
@@ -102,6 +115,9 @@ const App: React.FC = () => {
     localStorage.clear();
     setCurrentJudgeName(null);
     setAccessPhrase(null);
+    setTeams(INITIAL_TEAMS);
+    setRatings([]);
+    setKnownJudges([]);
     setView('dashboard');
   };
 
@@ -110,7 +126,6 @@ const App: React.FC = () => {
     setRatings(prev => {
       const filtered = prev.filter(r => !(r.teamId === rating.teamId && r.judgeId === rating.judgeId));
       const updated = [...filtered, rating];
-      // Sync immediately to cloud on score save
       syncToCloud(teams, updated, knownJudges);
       return updated;
     });
@@ -119,9 +134,11 @@ const App: React.FC = () => {
 
   const handleAddTeam = (team: Team) => {
     if (currentRole !== 'organizer') return;
-    const updatedTeams = [...teams, team];
-    setTeams(updatedTeams);
-    syncToCloud(updatedTeams, ratings, knownJudges);
+    setTeams(prev => {
+      const updated = [...prev, team];
+      syncToCloud(updated, ratings, knownJudges);
+      return updated;
+    });
   };
 
   const handleRemoveTeam = (id: string) => {
@@ -133,22 +150,19 @@ const App: React.FC = () => {
     syncToCloud(updatedTeams, updatedRatings, knownJudges);
   };
 
-  // Derived Values
-  const allActiveJudges = useMemo(() => {
-    const judgesWithRatings = ratings.map(r => r.judgeId);
-    return Array.from(new Set([...knownJudges, ...judgesWithRatings]));
-  }, [knownJudges, ratings]);
-
-  const derivedOtherJudges: Judge[] = allActiveJudges
-    .filter(name => (currentRole === 'organizer' ? true : name !== currentJudgeName))
-    .map(name => {
-      const judgeRatingsCount = ratings.filter(r => r.judgeId === name).length;
-      let status: 'pending' | 'in-progress' | 'completed' = 'pending';
-      if (judgeRatingsCount === 0) status = 'pending';
-      else if (judgeRatingsCount >= teams.length && teams.length > 0) status = 'completed';
-      else status = 'in-progress';
-      return { id: name, name: name, status: status };
-    });
+  const derivedOtherJudges: Judge[] = useMemo(() => {
+    const allNames = Array.from(new Set([...knownJudges, ...ratings.map(r => r.judgeId)]));
+    return allNames
+      .filter(name => (currentRole === 'organizer' ? true : name !== currentJudgeName))
+      .map(name => {
+        const judgeRatingsCount = ratings.filter(r => r.judgeId === name).length;
+        let status: 'pending' | 'in-progress' | 'completed' = 'pending';
+        if (judgeRatingsCount === 0) status = 'pending';
+        else if (judgeRatingsCount >= teams.length && teams.length > 0) status = 'completed';
+        else status = 'in-progress';
+        return { id: name, name: name, status: status };
+      });
+  }, [knownJudges, ratings, teams.length, currentJudgeName, currentRole]);
 
   if (!currentJudgeName) {
     return <Login onLogin={handleLogin} />;
@@ -176,7 +190,7 @@ const App: React.FC = () => {
               <div className="flex items-center gap-3 mr-6 px-4 py-2 bg-slate-50 rounded-xl border border-slate-100">
                 <div className={`w-2 h-2 rounded-full ${isSyncing ? 'bg-indigo-500 animate-pulse' : 'bg-green-500'}`} />
                 <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">
-                  {isSyncing ? 'Syncing...' : 'Live Cloud Sync'}
+                  {isSyncing ? 'Cloud Syncing...' : 'Live Cloud Sync'}
                 </span>
               </div>
 
