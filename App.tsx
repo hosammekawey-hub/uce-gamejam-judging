@@ -20,7 +20,7 @@ const App: React.FC = () => {
 
   const [teams, setTeams] = useState<Team[]>(() => {
     const saved = localStorage.getItem('jamJudge_teams');
-    return saved ? JSON.parse(saved) : INITIAL_TEAMS;
+    return (saved && saved !== '[]') ? JSON.parse(saved) : INITIAL_TEAMS;
   });
 
   const [ratings, setRatings] = useState<Rating[]>(() => {
@@ -39,12 +39,15 @@ const App: React.FC = () => {
     if (!accessPhrase) return;
     setIsSyncing(true);
     try {
-      await SyncService.pushData(accessPhrase, {
+      const success = await SyncService.pushData(accessPhrase, {
         teams: currentTeams,
         ratings: currentRatings,
         judges: currentJudges,
         updatedAt: Date.now()
       });
+      if (!success) {
+        console.warn('Sync to cloud was unsuccessful.');
+      }
     } finally {
       setIsSyncing(false);
     }
@@ -61,14 +64,13 @@ const App: React.FC = () => {
       const cloudData = await SyncService.pullData(accessPhrase);
       
       if (isMounted && cloudData) {
-        // Only update if cloud data is newer or local is empty
         if (cloudData.teams && cloudData.teams.length > 0) {
            setTeams(cloudData.teams);
         }
         if (cloudData.ratings) setRatings(cloudData.ratings);
         if (cloudData.judges) setKnownJudges(cloudData.judges);
-      } else if (isMounted && !cloudData && currentRole === 'organizer') {
-        // If cloud is empty and we are an organizer, initialize the cloud with our current (likely initial) teams
+      } else if (isMounted && !cloudData && accessPhrase) {
+        // If cloud is empty, let's establish our current local state as the master
         syncToCloud(teams, ratings, knownJudges);
       }
       
@@ -77,13 +79,13 @@ const App: React.FC = () => {
 
     loadCloudData();
     
-    // Polling for updates every 10 seconds
-    const interval = setInterval(loadCloudData, 10000);
+    // Polling for updates every 15 seconds to stay in sync with peers
+    const interval = setInterval(loadCloudData, 15000);
     return () => {
       isMounted = false;
       clearInterval(interval);
     };
-  }, [accessPhrase, currentRole]);
+  }, [accessPhrase]);
 
   // Persistent Local Storage updates
   useEffect(() => {
@@ -102,12 +104,14 @@ const App: React.FC = () => {
     setCurrentRole(role);
     setAccessPhrase(phrase);
     
+    // When logging in, establish yourself in the judge pool
     if (role === 'judge') {
-      setKnownJudges(prev => {
-        const updated = Array.from(new Set([...prev, name]));
-        syncToCloud(teams, ratings, updated);
-        return updated;
-      });
+      const updatedJudges = Array.from(new Set([...knownJudges, name]));
+      setKnownJudges(updatedJudges);
+      syncToCloud(teams, ratings, updatedJudges);
+    } else {
+      // Just do a sync to establish presence
+      syncToCloud(teams, ratings, knownJudges);
     }
   };
 
