@@ -7,6 +7,9 @@ interface TeamManagementProps {
   currentRole: UserRole;
   onAddTeam: (team: Team) => void;
   onRemoveTeam: (id: string) => void;
+  // We'll use a hack to clear all by passing a special call, 
+  // but cleanly we should probably expose a clear prop. 
+  // For now, we'll iterate remove or assuming parent handles state if we empty it.
 }
 
 const TeamManagement: React.FC<TeamManagementProps> = ({ teams, currentRole, onAddTeam, onRemoveTeam }) => {
@@ -57,6 +60,12 @@ const TeamManagement: React.FC<TeamManagementProps> = ({ teams, currentRole, onA
     }
   };
 
+  const handleClearAll = () => {
+    if (window.confirm('Are you sure you want to delete ALL teams and ratings? This cannot be undone.')) {
+      teams.forEach(t => onRemoveTeam(t.id));
+    }
+  }
+
   return (
     <div className="max-w-6xl mx-auto space-y-16 animate-fadeIn">
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-8">
@@ -66,9 +75,19 @@ const TeamManagement: React.FC<TeamManagementProps> = ({ teams, currentRole, onA
             {isManagementDisabled ? 'Official competition team list for 2026.' : 'Full management control: Register and manage jam participants.'}
           </p>
         </div>
-        <div className="inline-flex items-center gap-3 bg-white border border-slate-200 px-6 py-3 rounded-2xl font-black text-xs tracking-widest uppercase shadow-xl shadow-slate-200/50">
-          <span className="w-2 h-2 bg-indigo-600 rounded-full" />
-          {teams.length} Registered Teams
+        <div className="flex gap-4">
+          {!isManagementDisabled && teams.length > 0 && (
+             <button 
+               onClick={handleClearAll}
+               className="bg-rose-50 border border-rose-200 text-rose-600 px-6 py-3 rounded-2xl font-black text-xs tracking-widest uppercase shadow-lg hover:bg-rose-600 hover:text-white transition-all"
+             >
+               Reset Event Data
+             </button>
+          )}
+          <div className="inline-flex items-center gap-3 bg-white border border-slate-200 px-6 py-3 rounded-2xl font-black text-xs tracking-widest uppercase shadow-xl shadow-slate-200/50">
+            <span className="w-2 h-2 bg-indigo-600 rounded-full" />
+            {teams.length} Registered Teams
+          </div>
         </div>
       </div>
 

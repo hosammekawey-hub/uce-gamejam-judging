@@ -7,6 +7,7 @@ import RatingForm from './components/RatingForm';
 import Leaderboard from './components/Leaderboard';
 import Login from './components/Login';
 import TeamManagement from './components/TeamManagement';
+import JudgeManagement from './components/JudgeManagement';
 import { SyncService } from './services/syncService';
 
 const App: React.FC = () => {
@@ -14,7 +15,7 @@ const App: React.FC = () => {
   const [currentRole, setCurrentRole] = useState<UserRole>(() => (localStorage.getItem('jamJudge_role') as UserRole) || 'judge');
   const [accessPhrase, setAccessPhrase] = useState<string | null>(() => localStorage.getItem('jamJudge_phrase'));
   
-  const [view, setView] = useState<'dashboard' | 'rating' | 'leaderboard' | 'teams'>('dashboard');
+  const [view, setView] = useState<'dashboard' | 'rating' | 'leaderboard' | 'teams' | 'judges'>('dashboard');
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
   
   const [isSyncing, setIsSyncing] = useState(false);
@@ -175,10 +176,24 @@ const App: React.FC = () => {
     syncToCloud(updatedTeams, updatedRatings, knownJudges);
   };
 
+  const handleRemoveJudge = (judgeId: string) => {
+    if (currentRole !== 'organizer') return;
+    
+    const updatedJudges = knownJudges.filter(j => j !== judgeId);
+    // Also remove any ratings associated with this judge
+    const updatedRatings = ratings.filter(r => r.judgeId !== judgeId);
+    
+    setKnownJudges(updatedJudges);
+    setRatings(updatedRatings);
+    syncToCloud(teams, updatedRatings, updatedJudges);
+  };
+
   const derivedOtherJudges: Judge[] = useMemo(() => {
+    // If organizer, show everyone. If judge, show everyone but self (or everyone including self if desired context)
+    // For the Roster view, we want ALL judges.
     const allNames = Array.from(new Set([...knownJudges, ...ratings.map(r => r.judgeId)]));
     return allNames
-      .filter(name => (currentRole === 'organizer' ? true : name !== currentJudgeName))
+      .filter(name => (view === 'judges' ? true : name !== currentJudgeName)) // In 'judges' view, show all. In dashboard, filter self.
       .map(name => {
         const judgeRatingsCount = ratings.filter(r => r.judgeId === name).length;
         let status: 'pending' | 'in-progress' | 'completed' = 'pending';
@@ -187,7 +202,7 @@ const App: React.FC = () => {
         else status = 'in-progress';
         return { id: name, name: name, status: status };
       });
-  }, [knownJudges, ratings, teams.length, currentJudgeName, currentRole]);
+  }, [knownJudges, ratings, teams.length, currentJudgeName, currentRole, view]);
 
   if (!currentJudgeName) {
     return <Login onLogin={handleLogin} />;
@@ -196,6 +211,7 @@ const App: React.FC = () => {
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', roles: ['judge', 'organizer'] },
     { id: 'teams', label: 'Team Roster', roles: ['organizer'] },
+    { id: 'judges', label: 'Judge Roster', roles: ['organizer'] },
     { id: 'leaderboard', label: 'Standings', roles: ['judge', 'organizer'] }
   ].filter(item => item.roles.includes(currentRole));
 
@@ -277,6 +293,13 @@ const App: React.FC = () => {
             currentRole={currentRole}
             onAddTeam={handleAddTeam}
             onRemoveTeam={handleRemoveTeam}
+          />
+        )}
+        {view === 'judges' && currentRole === 'organizer' && (
+          <JudgeManagement
+            judges={derivedOtherJudges}
+            teams={teams}
+            onRemoveJudge={handleRemoveJudge}
           />
         )}
       </main>

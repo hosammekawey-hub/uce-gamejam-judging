@@ -1,9 +1,11 @@
 
 // We use a specific bucket ID for this event.
 // In a real production scenario, you would create a private bucket on kvdb.io and use the secret key.
-// For this jam, we use a public-access bucket pattern.
-const BUCKET_ID = 'ucegj2026syncv2'; 
+const BUCKET_ID = 'EsoeNYZt9bNthRpMz2jCTU'; 
 const BASE_URL = `https://kvdb.io/${BUCKET_ID}`;
+
+// Circuit breaker to stop flooding the console with 404s if the bucket doesn't exist
+let isBackendUnavailable = false;
 
 export const SyncService = {
   /**
@@ -18,7 +20,7 @@ export const SyncService = {
    * Fetches all competition data.
    */
   async pullData(phrase: string) {
-    if (!phrase) return null;
+    if (!phrase || isBackendUnavailable) return null;
     try {
       const key = this.getCompetitionKey(phrase);
       // Adding a timestamp to prevent aggressive browser caching of the fetch request
@@ -27,19 +29,21 @@ export const SyncService = {
       const response = await fetch(url);
       
       if (response.status === 404) {
-        // This is normal for a fresh session that hasn't synced yet.
+        // Bucket or Key not found. This is expected for new events.
+        // We don't disable the backend here because it might just be an empty key, 
+        // but if the bucket itself is missing, POST will fail later.
         return null;
       }
       
       if (!response.ok) {
-        // If the service is down or bucket is invalid, return null to trigger offline mode
-        console.warn(`[SyncService] Remote fetch issue (${response.status}). Using local data.`);
+        console.warn(`[SyncService] Remote fetch issue (${response.status}). Switching to local data.`);
+        isBackendUnavailable = true; // Stop trying if server errors
         return null;
       }
       
       return await response.json();
     } catch (error) {
-      console.warn('[SyncService] Network offline or unreachable.');
+      // Network error (offline)
       return null;
     }
   },
@@ -48,13 +52,12 @@ export const SyncService = {
    * Pushes the current state to the cloud.
    */
   async pushData(phrase: string, data: any) {
-    if (!phrase) return false;
+    if (!phrase || isBackendUnavailable) return false;
     
     try {
       const key = this.getCompetitionKey(phrase);
       const url = `${BASE_URL}/${key}`;
       
-      // We use POST to create/update.
       const response = await fetch(url, {
         method: 'POST', 
         headers: { 
@@ -68,7 +71,10 @@ export const SyncService = {
 
       if (!response.ok) {
         if (response.status === 404) {
-          console.warn('[SyncService] Cloud bucket not initialized. App will work offline.');
+          // The bucket itself likely doesn't exist. 
+          // Stop trying to sync to prevent console red spam.
+          console.log('[SyncService] Cloud storage not configured. Running in Offline Mode.');
+          isBackendUnavailable = true;
         }
         return false;
       }
