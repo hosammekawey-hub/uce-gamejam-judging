@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo } from 'react';
 import { Team, Rating, ScoreSet, UserRole } from '../types';
 import { RUBRIC } from '../constants';
@@ -53,8 +52,10 @@ const RatingForm: React.FC<RatingFormProps> = ({ team, judgeName, currentRole, e
     <div className="max-w-4xl mx-auto space-y-12 animate-slideUp pb-20">
       {isReadOnly && (
         <div className="bg-amber-100 border-2 border-amber-200 p-6 rounded-[2rem] flex items-center justify-center gap-4 shadow-lg">
-          <span className="text-2xl">👁️</span>
-          <p className="text-amber-800 font-black uppercase tracking-widest text-sm">Organizer Review Mode: Viewing Only</p>
+          <span className="text-2xl">📊</span>
+          <p className="text-amber-800 font-black uppercase tracking-widest text-sm">
+            Organizer Mode: Viewing Average Scores & Aggregated Feedback
+          </p>
         </div>
       )}
 
@@ -72,7 +73,7 @@ const RatingForm: React.FC<RatingFormProps> = ({ team, judgeName, currentRole, e
           </div>
         </div>
         <div className="bg-slate-950 p-8 rounded-[2rem] text-center min-w-[200px] shadow-2xl">
-          <p className="text-[10px] text-indigo-400 uppercase font-black tracking-[0.2em] mb-2">Weighted Total</p>
+          <p className="text-[10px] text-indigo-400 uppercase font-black tracking-[0.2em] mb-2">{isReadOnly ? 'Avg Weighted' : 'Weighted Total'}</p>
           <div className={`text-6xl font-black ${isDisqualified ? 'text-rose-500 line-through' : 'text-white'}`}>
             {weightedTotal.toFixed(1)}<span className="text-slate-500 text-2xl font-normal ml-1">/10</span>
           </div>
@@ -101,7 +102,7 @@ const RatingForm: React.FC<RatingFormProps> = ({ team, judgeName, currentRole, e
                    <div className="text-5xl font-black text-indigo-600 px-8 py-4 bg-white border-2 border-indigo-100 rounded-[1.5rem] shadow-xl">
                     {scores[criterion.id]}
                   </div>
-                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-3">Points Awarded</span>
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-3">{isReadOnly ? 'Avg Points' : 'Points Awarded'}</span>
                 </div>
               </div>
 
@@ -165,14 +166,14 @@ const RatingForm: React.FC<RatingFormProps> = ({ team, judgeName, currentRole, e
         <div className="bg-white rounded-[3rem] border border-slate-200 shadow-2xl p-10 space-y-8">
           <div className="flex justify-between items-center">
             <h3 className="text-3xl font-black text-slate-900 tracking-tight">Qualitative Feedback</h3>
-            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Constructive Comments</span>
+            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{isReadOnly ? 'Aggregated Comments' : 'Constructive Comments'}</span>
           </div>
           <textarea 
             value={feedback}
             onChange={(e) => setFeedback(e.target.value)}
             disabled={isReadOnly}
             placeholder={isReadOnly ? "No judge comments provided yet." : "What stood out to you? Any advice for the developers?"}
-            className={`w-full h-48 px-8 py-6 bg-slate-50 border-2 border-slate-100 rounded-[2rem] focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 transition-all resize-none text-slate-800 font-bold text-lg placeholder:text-slate-300 ${isReadOnly ? 'cursor-default opacity-70' : ''}`}
+            className={`w-full h-48 px-8 py-6 bg-slate-50 border-2 border-slate-100 rounded-[2rem] focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 transition-all resize-none text-slate-800 font-bold text-lg placeholder:text-slate-300 ${isReadOnly ? 'cursor-default opacity-100' : ''}`}
           />
           
           <div className="pt-6">

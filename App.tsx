@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { TEAMS as INITIAL_TEAMS } from './constants';
-import { Team, Rating, Judge, UserRole } from './types';
+import { TEAMS as INITIAL_TEAMS, RUBRIC } from './constants';
+import { Team, Rating, Judge, UserRole, ScoreSet } from './types';
 import Dashboard from './components/Dashboard';
 import RatingForm from './components/RatingForm';
 import Leaderboard from './components/Leaderboard';
@@ -233,6 +233,52 @@ const App: React.FC = () => {
       });
   }, [knownJudges, ratings, teams.length, currentJudgeName, currentRole, view]);
 
+  // Logic to determine what rating data to show in the form
+  const activeRating = useMemo(() => {
+    if (!selectedTeam) return undefined;
+
+    if (currentRole === 'judge') {
+      return ratings.find(r => r.teamId === selectedTeam.id && r.judgeId === currentJudgeName);
+    } 
+
+    if (currentRole === 'organizer') {
+      // For organizers, calculate the AVERAGE rating across all judges
+      const teamRatings = ratings.filter(r => r.teamId === selectedTeam.id);
+      if (teamRatings.length === 0) return undefined;
+
+      const avgScores: ScoreSet = {};
+      RUBRIC.forEach(c => avgScores[c.id] = 0);
+
+      teamRatings.forEach(r => {
+        RUBRIC.forEach(c => {
+          avgScores[c.id] += (r.scores[c.id] || 0);
+        });
+      });
+
+      RUBRIC.forEach(c => {
+        avgScores[c.id] = Math.round(avgScores[c.id] / teamRatings.length);
+      });
+
+      // Combine feedback from all judges
+      const feedbackList = teamRatings
+        .filter(r => r.feedback && r.feedback.trim().length > 0)
+        .map(r => `--- Judge ${r.judgeId} ---\n${r.feedback}`);
+      
+      const combinedFeedback = feedbackList.length > 0 
+        ? feedbackList.join('\n\n') 
+        : "No qualitative feedback submitted yet.";
+
+      return {
+        teamId: selectedTeam.id,
+        judgeId: 'AGGREGATE',
+        scores: avgScores,
+        feedback: combinedFeedback,
+        isDisqualified: teamRatings.some(r => r.isDisqualified),
+        lastUpdated: Date.now()
+      } as Rating;
+    }
+  }, [selectedTeam, ratings, currentJudgeName, currentRole]);
+
   if (!currentJudgeName) {
     return <Login onLogin={handleLogin} />;
   }
@@ -307,8 +353,9 @@ const App: React.FC = () => {
         )}
         {view === 'rating' && selectedTeam && (
           <RatingForm 
+            key={selectedTeam.id}
             team={selectedTeam} 
-            existingRating={ratings.find(r => r.teamId === selectedTeam.id && r.judgeId === currentJudgeName)}
+            existingRating={activeRating}
             judgeName={currentJudgeName!}
             currentRole={currentRole}
             onSave={saveRating}
