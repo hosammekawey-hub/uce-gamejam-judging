@@ -20,19 +20,33 @@ const App: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [isOfflineMode, setIsOfflineMode] = useState(false);
 
+  // Initialize teams from local storage, or fall back to constants if storage is empty/invalid
   const [teams, setTeams] = useState<Team[]>(() => {
-    const saved = localStorage.getItem('jamJudge_teams');
-    return (saved && saved !== '[]') ? JSON.parse(saved) : INITIAL_TEAMS;
+    try {
+      const saved = localStorage.getItem('jamJudge_teams');
+      const parsed = saved ? JSON.parse(saved) : null;
+      return (parsed && Array.isArray(parsed) && parsed.length > 0) ? parsed : INITIAL_TEAMS;
+    } catch (e) {
+      return INITIAL_TEAMS;
+    }
   });
 
   const [ratings, setRatings] = useState<Rating[]>(() => {
-    const saved = localStorage.getItem('jamJudge_ratings');
-    return saved ? JSON.parse(saved) : [];
+    try {
+      const saved = localStorage.getItem('jamJudge_ratings');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      return [];
+    }
   });
 
   const [knownJudges, setKnownJudges] = useState<string[]>(() => {
-    const saved = localStorage.getItem('jamJudge_known_names');
-    return saved ? JSON.parse(saved) : [];
+    try {
+      const saved = localStorage.getItem('jamJudge_known_names');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      return [];
+    }
   });
 
   // --- CLOUD SYNC LOGIC ---
@@ -68,15 +82,19 @@ const App: React.FC = () => {
       if (isMounted) {
         if (cloudData) {
           setIsOfflineMode(false);
-          if (cloudData.teams && cloudData.teams.length > 0) {
+          // Only overwrite local if cloud has meaningful data
+          if (cloudData.teams && Array.isArray(cloudData.teams) && cloudData.teams.length > 0) {
              setTeams(cloudData.teams);
           }
-          if (cloudData.ratings) setRatings(cloudData.ratings);
-          if (cloudData.judges) setKnownJudges(cloudData.judges);
+          if (cloudData.ratings && Array.isArray(cloudData.ratings)) {
+             setRatings(cloudData.ratings);
+          }
+          if (cloudData.judges && Array.isArray(cloudData.judges)) {
+             setKnownJudges(cloudData.judges);
+          }
         } else {
-          // If null returned, it might be first time OR offline.
-          // We try to push our local state to initialize.
-          // If that fails, we are definitely offline.
+          // Cloud is empty or 404. 
+          // If we have local teams (which we usually do from INITIAL_TEAMS), push them to init the cloud.
           if (teams.length > 0) {
             syncToCloud(teams, ratings, knownJudges);
           }
@@ -145,7 +163,6 @@ const App: React.FC = () => {
     if (currentRole !== 'organizer') return;
     const updated = [...teams, team];
     setTeams(updated);
-    // We purposefully update local state FIRST so the UI is responsive even if sync fails
     syncToCloud(updated, ratings, knownJudges);
   };
 

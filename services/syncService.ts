@@ -1,8 +1,8 @@
 
-// Using a generic bucket ID. 
-// Note: In a real production environment, this bucket must be created via the KVDB API first.
-// If the bucket does not exist, the service will gracefully degrade to offline mode.
-const BUCKET_ID = 'ucegj2026syncv1'; 
+// We use a specific bucket ID for this event.
+// In a real production scenario, you would create a private bucket on kvdb.io and use the secret key.
+// For this jam, we use a public-access bucket pattern.
+const BUCKET_ID = 'ucegj2026syncv2'; 
 const BASE_URL = `https://kvdb.io/${BUCKET_ID}`;
 
 export const SyncService = {
@@ -21,27 +21,25 @@ export const SyncService = {
     if (!phrase) return null;
     try {
       const key = this.getCompetitionKey(phrase);
-      const url = `${BASE_URL}/${key}`;
+      // Adding a timestamp to prevent aggressive browser caching of the fetch request
+      const url = `${BASE_URL}/${key}?t=${Date.now()}`;
       
       const response = await fetch(url);
       
       if (response.status === 404) {
-        // Data doesn't exist yet, or bucket missing.
+        // This is normal for a fresh session that hasn't synced yet.
         return null;
       }
       
       if (!response.ok) {
-        // If bucket is missing or other server error, strict fail here to trigger offline mode handling in App
-        if (response.status === 400 || response.status === 403) {
-           console.warn('[SyncService] Cloud access denied or invalid. Switching to local.');
-           return null;
-        }
-        throw new Error(`Cloud Pull failed: ${response.status}`);
+        // If the service is down or bucket is invalid, return null to trigger offline mode
+        console.warn(`[SyncService] Remote fetch issue (${response.status}). Using local data.`);
+        return null;
       }
       
       return await response.json();
     } catch (error) {
-      // Suppress network errors to avoid console spam, just return null to fallback to local
+      console.warn('[SyncService] Network offline or unreachable.');
       return null;
     }
   },
@@ -56,8 +54,9 @@ export const SyncService = {
       const key = this.getCompetitionKey(phrase);
       const url = `${BASE_URL}/${key}`;
       
+      // We use POST to create/update.
       const response = await fetch(url, {
-        method: 'POST', // POST is often safer for upserts in some KV stores, though PUT is standard
+        method: 'POST', 
         headers: { 
           'Content-Type': 'application/json'
         },
@@ -68,16 +67,14 @@ export const SyncService = {
       });
 
       if (!response.ok) {
-        // If we get a 404 on push, the bucket likely doesn't exist.
         if (response.status === 404) {
-          console.warn('[SyncService] Cloud bucket not found. Operating in Offline Mode.');
+          console.warn('[SyncService] Cloud bucket not initialized. App will work offline.');
         }
         return false;
       }
 
       return true;
     } catch (error) {
-      // Silent fail for network issues to keep UX smooth
       return false;
     }
   }
