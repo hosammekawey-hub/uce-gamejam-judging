@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { TEAMS as INITIAL_TEAMS } from './constants';
 import { Team, Rating, Judge, UserRole } from './types';
@@ -56,19 +55,22 @@ const App: React.FC = () => {
     if (!accessPhrase) return;
     setIsSyncing(true);
     try {
+      // We pass the current role so the Service knows whether to overwrite the Team Roster (Organizer only)
+      // or merge respectfully (Judges).
       const success = await SyncService.pushData(accessPhrase, {
         teams: currentTeams,
         ratings: currentRatings,
         judges: currentJudges,
         updatedAt: Date.now()
-      });
+      }, currentRole);
+      
       setIsOfflineMode(!success);
     } catch (e) {
       setIsOfflineMode(true);
     } finally {
       setIsSyncing(false);
     }
-  }, [accessPhrase]);
+  }, [accessPhrase, currentRole]);
 
   // Initial Load and Polling from Cloud
   useEffect(() => {
@@ -83,20 +85,46 @@ const App: React.FC = () => {
       if (isMounted) {
         if (cloudData) {
           setIsOfflineMode(false);
-          // Only overwrite local if cloud has meaningful data
+          
+          // Merge Strategies for In-Memory State on Poll:
+          
+          // 1. Teams: If I am a judge, trust the cloud.
           if (cloudData.teams && Array.isArray(cloudData.teams) && cloudData.teams.length > 0) {
              setTeams(cloudData.teams);
           }
+
+          // 2. Ratings: Merge Cloud ratings into Local state
           if (cloudData.ratings && Array.isArray(cloudData.ratings)) {
-             setRatings(cloudData.ratings);
+             // Separate ratings into "Mine" and "Others"
+             const myLocalRatings = ratings.filter(r => r.judgeId === currentJudgeName);
+             const othersCloudRatings = cloudData.ratings.filter(r => r.judgeId !== currentJudgeName);
+             const myCloudRatings = cloudData.ratings.filter(r => r.judgeId === currentJudgeName);
+             
+             // Merge "My" ratings (Keep local if newer, else accept cloud if I rated on another device)
+             const mergedMyRatings = [...myLocalRatings];
+             
+             myCloudRatings.forEach(cloudR => {
+                const localIdx = mergedMyRatings.findIndex(l => l.teamId === cloudR.teamId);
+                if (localIdx === -1) {
+                   // I don't have this locally, but cloud has it -> I rated elsewhere
+                   mergedMyRatings.push(cloudR);
+                } else {
+                   // I have it locally. Only overwrite if cloud is somehow newer (unlikely if active, but good for safety)
+                   if (cloudR.lastUpdated > mergedMyRatings[localIdx].lastUpdated) {
+                      mergedMyRatings[localIdx] = cloudR;
+                   }
+                }
+             });
+
+             setRatings([...othersCloudRatings, ...mergedMyRatings]);
           }
+
           if (cloudData.judges && Array.isArray(cloudData.judges)) {
-             setKnownJudges(cloudData.judges);
+             setKnownJudges(prev => Array.from(new Set([...prev, ...cloudData.judges])));
           }
         } else {
-          // Cloud is empty or 404. 
-          // If we have local teams (which we usually do from INITIAL_TEAMS), push them to init the cloud.
-          if (teams.length > 0) {
+          // Cloud is empty/404. If we have local data (e.g. Organizer initializing), push it.
+          if (teams.length > 0 && currentRole === 'organizer') {
             syncToCloud(teams, ratings, knownJudges);
           }
         }
@@ -106,14 +134,15 @@ const App: React.FC = () => {
 
     loadCloudData();
     
-    const interval = setInterval(loadCloudData, 15000);
+    // Poll frequently (every 5s) to get other judges' progress
+    const interval = setInterval(loadCloudData, 5000);
     return () => {
       isMounted = false;
       clearInterval(interval);
     };
-  }, [accessPhrase]);
+  }, [accessPhrase, currentJudgeName]); // Add dependencies
 
-  // Persistence for smooth refresh experience
+  // Persistence
   useEffect(() => {
     if (currentJudgeName) {
       localStorage.setItem('jamJudge_name', currentJudgeName);
@@ -152,8 +181,11 @@ const App: React.FC = () => {
   const saveRating = (rating: Rating) => {
     if (currentRole === 'organizer') return;
     setRatings(prev => {
+      // Remove old version of this rating if exists
       const filtered = prev.filter(r => !(r.teamId === rating.teamId && r.judgeId === rating.judgeId));
       const updated = [...filtered, rating];
+      
+      // Immediately sync this new state
       syncToCloud(teams, updated, knownJudges);
       return updated;
     });
@@ -180,7 +212,6 @@ const App: React.FC = () => {
     if (currentRole !== 'organizer') return;
     
     const updatedJudges = knownJudges.filter(j => j !== judgeId);
-    // Also remove any ratings associated with this judge
     const updatedRatings = ratings.filter(r => r.judgeId !== judgeId);
     
     setKnownJudges(updatedJudges);
@@ -189,11 +220,9 @@ const App: React.FC = () => {
   };
 
   const derivedOtherJudges: Judge[] = useMemo(() => {
-    // If organizer, show everyone. If judge, show everyone but self (or everyone including self if desired context)
-    // For the Roster view, we want ALL judges.
     const allNames = Array.from(new Set([...knownJudges, ...ratings.map(r => r.judgeId)]));
     return allNames
-      .filter(name => (view === 'judges' ? true : name !== currentJudgeName)) // In 'judges' view, show all. In dashboard, filter self.
+      .filter(name => (view === 'judges' ? true : name !== currentJudgeName)) 
       .map(name => {
         const judgeRatingsCount = ratings.filter(r => r.judgeId === name).length;
         let status: 'pending' | 'in-progress' | 'completed' = 'pending';
