@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { TEAMS as INITIAL_TEAMS, RUBRIC } from './constants';
 import { Team, Rating, Judge, UserRole, ScoreSet } from './types';
@@ -20,7 +21,7 @@ const App: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [isOfflineMode, setIsOfflineMode] = useState(false);
 
-  // Initialize teams from local storage, or fall back to constants if storage is empty/invalid
+  // Initialize teams from local storage
   const [teams, setTeams] = useState<Team[]>(() => {
     try {
       const saved = localStorage.getItem('jamJudge_teams');
@@ -49,16 +50,47 @@ const App: React.FC = () => {
     }
   });
 
-  // --- REFS FOR POLLING ---
-  // We use refs to access the latest state inside the polling interval closure
-  // without adding them to dependencies (which would reset the interval or cause loops).
+  // --- REFS FOR POLLING & TOMBSTONES ---
   const teamsRef = useRef(teams);
   const ratingsRef = useRef(ratings);
   const judgesRef = useRef(knownJudges);
+  
+  // Tombstones: IDs of items we have deleted.
+  // We initialize from localStorage so deletions survive a page refresh.
+  // Using useState for lazy initialization to compute initial value once.
+  const [initialTombstones] = useState<{ teams: Set<string>, judges: Set<string> }>(() => {
+    try {
+      const saved = localStorage.getItem('jamJudge_tombstones');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return {
+          teams: new Set<string>(parsed.teams || []),
+          judges: new Set<string>(parsed.judges || [])
+        };
+      }
+    } catch (e) {}
+    return { teams: new Set<string>(), judges: new Set<string>() };
+  });
+
+  const tombstonesRef = useRef(initialTombstones);
 
   useEffect(() => { teamsRef.current = teams; }, [teams]);
   useEffect(() => { ratingsRef.current = ratings; }, [ratings]);
   useEffect(() => { judgesRef.current = knownJudges; }, [knownJudges]);
+
+  // Helper to persist tombstones
+  const updateTombstones = (type: 'teams' | 'judges', id: string) => {
+    tombstonesRef.current[type].add(id);
+    localStorage.setItem('jamJudge_tombstones', JSON.stringify({
+      teams: Array.from(tombstonesRef.current.teams),
+      judges: Array.from(tombstonesRef.current.judges)
+    }));
+  };
+
+  const clearTombstones = () => {
+    tombstonesRef.current = { teams: new Set(), judges: new Set() };
+    localStorage.removeItem('jamJudge_tombstones');
+  }
 
   // --- CLOUD SYNC LOGIC ---
 
@@ -66,14 +98,23 @@ const App: React.FC = () => {
     if (!accessPhrase) return;
     setIsSyncing(true);
     try {
-      // We pass the current role so the Service knows whether to overwrite the Team Roster (Organizer only)
-      // or merge respectfully (Judges).
-      const success = await SyncService.pushData(accessPhrase, {
-        teams: currentTeams,
-        ratings: currentRatings,
-        judges: currentJudges,
-        updatedAt: Date.now()
-      }, currentRole);
+      // Pass tombstones to sync service so it knows what to exclude from remote merges
+      const banned = {
+        teams: Array.from(tombstonesRef.current.teams),
+        judges: Array.from(tombstonesRef.current.judges)
+      };
+
+      const success = await SyncService.pushData(
+        accessPhrase, 
+        {
+          teams: currentTeams,
+          ratings: currentRatings,
+          judges: currentJudges,
+          updatedAt: Date.now()
+        }, 
+        currentRole,
+        banned
+      );
       
       setIsOfflineMode(!success);
     } catch (e) {
@@ -83,7 +124,6 @@ const App: React.FC = () => {
     }
   }, [accessPhrase, currentRole]);
 
-  // Initial Load and Polling from Cloud
   useEffect(() => {
     let isMounted = true;
 
@@ -101,44 +141,56 @@ const App: React.FC = () => {
           const currentRatingsState = ratingsRef.current;
           const currentJudgesState = judgesRef.current;
           
-          // Merge Strategies for In-Memory State on Poll:
+          // --- MERGE STRATEGIES ---
           
           // 1. Teams
           if (cloudData.teams && Array.isArray(cloudData.teams)) {
+            // Always filter out tombstones first
+            const validCloudTeams = cloudData.teams.filter(t => !tombstonesRef.current.teams.has(t.id));
+
             if (currentRole === 'organizer') {
-              // Organizer Authority:
-              // If we are an organizer, we generally trust our local state because we are the ones editing it.
-              // Overwriting local with cloud causes "revert" bugs if the poll happens before our push lands.
-              // We only accept cloud teams if our local list is empty (initial load).
-              if (currentTeamsState.length === 0 && cloudData.teams.length > 0) {
-                setTeams(cloudData.teams);
+              // Organizer: Only accept new teams from cloud if we have NONE (initial load).
+              // Otherwise, we manage the roster locally.
+              if (currentTeamsState.length === 0 && validCloudTeams.length > 0) {
+                setTeams(validCloudTeams);
               }
             } else {
-              // Judges always trust the cloud roster.
-              if (cloudData.teams.length > 0) {
-                setTeams(cloudData.teams);
+              // Judges: Accept the valid cloud roster
+              if (validCloudTeams.length > 0) {
+                setTeams(validCloudTeams);
               }
             }
           }
 
-          // 2. Ratings: Merge Cloud ratings into Local state
-          if (cloudData.ratings && Array.isArray(cloudData.ratings)) {
-             // Separate ratings into "Mine" and "Others"
-             const myLocalRatings = currentRatingsState.filter(r => r.judgeId === currentJudgeName);
-             const othersCloudRatings = cloudData.ratings.filter(r => r.judgeId !== currentJudgeName);
-             const myCloudRatings = cloudData.ratings.filter(r => r.judgeId === currentJudgeName);
+          // 2. Judges List
+          // Cloud is the source of truth for NEW judges.
+          // But we must reject judges we have locally banned (tombstoned).
+          if (cloudData.judges && Array.isArray(cloudData.judges)) {
+             const validCloudJudges = cloudData.judges.filter(jId => !tombstonesRef.current.judges.has(jId));
              
-             // Merge "My" ratings (Keep local if newer, else accept cloud if I rated on another device)
+             // Merge with local knowledge
+             setKnownJudges(prev => Array.from(new Set([...prev, ...validCloudJudges])));
+          }
+
+          // 3. Ratings
+          if (cloudData.ratings && Array.isArray(cloudData.ratings)) {
+             // Filter ratings from banned judges or teams
+             const validCloudRatings = cloudData.ratings.filter(r => 
+               !tombstonesRef.current.judges.has(r.judgeId) && 
+               !tombstonesRef.current.teams.has(r.teamId)
+             );
+
+             const myLocalRatings = currentRatingsState.filter(r => r.judgeId === currentJudgeName);
+             const othersCloudRatings = validCloudRatings.filter(r => r.judgeId !== currentJudgeName);
+             const myCloudRatings = validCloudRatings.filter(r => r.judgeId === currentJudgeName);
+             
              const mergedMyRatings = [...myLocalRatings];
              
              myCloudRatings.forEach(cloudR => {
                 const localIdx = mergedMyRatings.findIndex(l => l.teamId === cloudR.teamId);
                 if (localIdx === -1) {
-                   // I don't have this locally, but cloud has it -> I rated elsewhere
                    mergedMyRatings.push(cloudR);
                 } else {
-                   // I have it locally. Only overwrite if cloud is strictly newer.
-                   // This protects against the poll reverting a just-saved rating (where local timestamp > cloud timestamp).
                    if (cloudR.lastUpdated > mergedMyRatings[localIdx].lastUpdated) {
                       mergedMyRatings[localIdx] = cloudR;
                    }
@@ -148,12 +200,8 @@ const App: React.FC = () => {
              setRatings([...othersCloudRatings, ...mergedMyRatings]);
           }
 
-          if (cloudData.judges && Array.isArray(cloudData.judges)) {
-             setKnownJudges(prev => Array.from(new Set([...prev, ...cloudData.judges])));
-          }
         } else {
-          // Cloud is empty/404. If we have local data (e.g. Organizer initializing), push it.
-          // Use refs to check current state
+          // Cloud empty. Push local state if organizer.
           if (teamsRef.current.length > 0 && currentRole === 'organizer') {
             syncToCloud(teamsRef.current, ratingsRef.current, judgesRef.current);
           }
@@ -163,8 +211,6 @@ const App: React.FC = () => {
     };
 
     loadCloudData();
-    
-    // Poll frequently (every 5s) to get other judges' progress
     const interval = setInterval(loadCloudData, 5000);
     return () => {
       isMounted = false;
@@ -189,6 +235,9 @@ const App: React.FC = () => {
     setCurrentRole(role);
     setAccessPhrase(phrase);
     
+    // Clear tombstones on new login to prevent carrying over bans between sessions/users
+    clearTombstones();
+    
     if (role === 'judge') {
       const updatedJudges = Array.from(new Set([...knownJudges, name]));
       setKnownJudges(updatedJudges);
@@ -199,7 +248,7 @@ const App: React.FC = () => {
   };
 
   const handleLogout = () => {
-    localStorage.clear();
+    localStorage.clear(); // Clears all data including tombstones
     setCurrentJudgeName(null);
     setAccessPhrase(null);
     setTeams(INITIAL_TEAMS);
@@ -211,11 +260,8 @@ const App: React.FC = () => {
   const saveRating = (rating: Rating) => {
     if (currentRole === 'organizer') return;
     setRatings(prev => {
-      // Remove old version of this rating if exists
       const filtered = prev.filter(r => !(r.teamId === rating.teamId && r.judgeId === rating.judgeId));
       const updated = [...filtered, rating];
-      
-      // Immediately sync this new state
       syncToCloud(teams, updated, knownJudges);
       return updated;
     });
@@ -231,6 +277,9 @@ const App: React.FC = () => {
 
   const handleRemoveTeam = (id: string) => {
     if (currentRole !== 'organizer') return;
+    
+    updateTombstones('teams', id);
+
     const updatedTeams = teams.filter(t => t.id !== id);
     const updatedRatings = ratings.filter(r => r.teamId !== id);
     setTeams(updatedTeams);
@@ -241,6 +290,8 @@ const App: React.FC = () => {
   const handleRemoveJudge = (judgeId: string) => {
     if (currentRole !== 'organizer') return;
     
+    updateTombstones('judges', judgeId);
+    
     const updatedJudges = knownJudges.filter(j => j !== judgeId);
     const updatedRatings = ratings.filter(r => r.judgeId !== judgeId);
     
@@ -250,8 +301,7 @@ const App: React.FC = () => {
   };
 
   const derivedOtherJudges: Judge[] = useMemo(() => {
-    const allNames = Array.from(new Set([...knownJudges, ...ratings.map(r => r.judgeId)]));
-    return allNames
+    return knownJudges
       .filter(name => (view === 'judges' ? true : name !== currentJudgeName)) 
       .map(name => {
         const judgeRatingsCount = ratings.filter(r => r.judgeId === name).length;
@@ -263,7 +313,6 @@ const App: React.FC = () => {
       });
   }, [knownJudges, ratings, teams.length, currentJudgeName, currentRole, view]);
 
-  // Logic to determine what rating data to show in the form
   const activeRating = useMemo(() => {
     if (!selectedTeam) return undefined;
 
@@ -272,7 +321,6 @@ const App: React.FC = () => {
     } 
 
     if (currentRole === 'organizer') {
-      // For organizers, calculate the AVERAGE rating across all judges
       const teamRatings = ratings.filter(r => r.teamId === selectedTeam.id);
       if (teamRatings.length === 0) return undefined;
 
@@ -289,7 +337,6 @@ const App: React.FC = () => {
         avgScores[c.id] = Math.round(avgScores[c.id] / teamRatings.length);
       });
 
-      // Combine feedback from all judges
       const feedbackList = teamRatings
         .filter(r => r.feedback && r.feedback.trim().length > 0)
         .map(r => `--- Judge ${r.judgeId} ---\n${r.feedback}`);
@@ -414,3 +461,4 @@ const App: React.FC = () => {
 };
 
 export default App;
+    

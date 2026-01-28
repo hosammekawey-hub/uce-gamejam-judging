@@ -15,15 +15,17 @@ interface CloudData {
   updatedAt: number;
 }
 
+interface BannedLists {
+  teams: string[];
+  judges: string[];
+}
+
 export const SyncService = {
   getCompetitionKey(phrase: string) {
-    // CRITICAL FIX: Both 'admin' (Organizer) and 'mask' (Judge) must point to the SAME data key.
-    // The organizer created data under 'jam_admin', so judges must read from there too.
     const normalized = phrase.toLowerCase().trim();
     if (normalized === 'mask' || normalized === 'admin') {
       return 'jam_admin';
     }
-    // Fallback for other phrases (if any)
     return `jam_${normalized.replace(/[^a-z0-9]/g, '')}`;
   },
 
@@ -50,7 +52,6 @@ export const SyncService = {
       }
       
       if (!response.ok) {
-        console.warn(`[SyncService] Remote fetch issue (${response.status}). Switching to local data.`);
         isBackendUnavailable = true; 
         return null;
       }
@@ -63,9 +64,14 @@ export const SyncService = {
 
   /**
    * Smart Sync: Fetches latest cloud data, merges with local changes, then pushes.
-   * This prevents one judge from overwriting another judge's work.
+   * Handles Banned IDs (Tombstones) to prevent reviving deleted items.
    */
-  async pushData(phrase: string, localData: CloudData, role: 'judge' | 'organizer') {
+  async pushData(
+    phrase: string, 
+    localData: CloudData, 
+    role: 'judge' | 'organizer',
+    banned?: BannedLists
+  ) {
     if (!phrase || isBackendUnavailable) return false;
     
     try {
@@ -78,8 +84,7 @@ export const SyncService = {
         headers['Authorization'] = `Basic ${auth}`;
       }
 
-      // 1. Fetch the absolute latest state from cloud before writing
-      //    (We reuse pullData logic but need it inline to be safe and reduce race conditions)
+      // 1. Fetch latest cloud data
       let remoteData: CloudData | null = null;
       try {
         const fetchRes = await fetch(`${url}?t=${Date.now()}`, { headers });
@@ -87,54 +92,81 @@ export const SyncService = {
           remoteData = await fetchRes.json();
         }
       } catch (e) {
-        // If fetch fails, we might be offline, so we can't safely merge. 
-        // We will fail the push to protect integrity.
         return false;
       }
 
       // 2. MERGE LOGIC
       let mergedData: CloudData = { ...localData };
+      const bannedJudges = new Set(banned?.judges || []);
+      const bannedTeams = new Set(banned?.teams || []);
 
       if (remoteData) {
-        // A. Merge Ratings (The critical part)
-        // We assume remote has ratings from other judges. We keep those.
-        // We only overwrite a specific rating if our local one is NEWER.
+        // A. Merge Ratings 
         const mergedRatingsMap = new Map<string, Rating>();
 
-        // Populate with remote ratings first
         if (Array.isArray(remoteData.ratings)) {
-          remoteData.ratings.forEach(r => mergedRatingsMap.set(`${r.judgeId}_${r.teamId}`, r));
+          // Add remote ratings ONLY if they aren't from banned judges/teams
+          remoteData.ratings.forEach(r => {
+            if (!bannedJudges.has(r.judgeId) && !bannedTeams.has(r.teamId)) {
+              mergedRatingsMap.set(`${r.judgeId}_${r.teamId}`, r);
+            }
+          });
         }
 
         // Overlay local ratings
         localData.ratings.forEach(localRating => {
-          const id = `${localRating.judgeId}_${localRating.teamId}`;
-          const remoteRating = mergedRatingsMap.get(id);
+          if (!bannedJudges.has(localRating.judgeId) && !bannedTeams.has(localRating.teamId)) {
+            const id = `${localRating.judgeId}_${localRating.teamId}`;
+            const remoteRating = mergedRatingsMap.get(id);
 
-          if (!remoteRating) {
-            // New rating from us, add it
-            mergedRatingsMap.set(id, localRating);
-          } else {
-            // Conflict: Check timestamps. Only overwrite if local is actually newer.
-            if (localRating.lastUpdated > remoteRating.lastUpdated) {
+            if (!remoteRating) {
               mergedRatingsMap.set(id, localRating);
+            } else {
+              if (localRating.lastUpdated > remoteRating.lastUpdated) {
+                mergedRatingsMap.set(id, localRating);
+              }
             }
           }
         });
 
         mergedData.ratings = Array.from(mergedRatingsMap.values());
 
-        // B. Merge Judges List (Union)
-        const allJudges = new Set([...(remoteData.judges || []), ...(localData.judges || [])]);
-        mergedData.judges = Array.from(allJudges);
-
-        // C. Merge Teams
-        // If we are a JUDGE, we trust the Cloud's team list (Organizers might have updated it).
-        // If we are an ORGANIZER, we trust our Local team list (we might have just added one).
+        // B. Merge Judges & Teams
         if (role === 'organizer') {
-           mergedData.teams = localData.teams;
+           // ORGANIZER LOGIC (Garbage Collection + New Addition Acceptance):
+           
+           // 1. Start with Local List (The authority on what the Organizer wants)
+           const finalTeams = [...localData.teams];
+           const finalJudges = new Set(localData.judges);
+
+           // 2. Look at Remote Data. 
+           // If Remote has a team/judge that is NOT in Local, AND NOT in Banned list, 
+           // it means it's a NEW entry (e.g. a judge who just logged in). We add them.
+           if (remoteData.judges) {
+             remoteData.judges.forEach(j => {
+               if (!bannedJudges.has(j)) {
+                 finalJudges.add(j);
+               }
+             });
+           }
+
+           // (Teams are usually only added by Organizer, but if we supported multi-admin...)
+           if (remoteData.teams) {
+             const localTeamIds = new Set(finalTeams.map(t => t.id));
+             remoteData.teams.forEach(t => {
+               if (!localTeamIds.has(t.id) && !bannedTeams.has(t.id)) {
+                 finalTeams.push(t);
+               }
+             });
+           }
+
+           mergedData.judges = Array.from(finalJudges);
+           mergedData.teams = finalTeams;
+
         } else {
-           // As a judge, accept the remote team list if it exists
+           // JUDGE LOGIC (Simple Union):
+           const allJudges = new Set([...(remoteData.judges || []), ...(localData.judges || [])]);
+           mergedData.judges = Array.from(allJudges);
            mergedData.teams = remoteData.teams && remoteData.teams.length > 0 ? remoteData.teams : localData.teams;
         }
       }
