@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { TEAMS as INITIAL_TEAMS, RUBRIC } from './constants';
 import { Team, Rating, Judge, UserRole, ScoreSet } from './types';
 import Dashboard from './components/Dashboard';
@@ -49,6 +49,17 @@ const App: React.FC = () => {
     }
   });
 
+  // --- REFS FOR POLLING ---
+  // We use refs to access the latest state inside the polling interval closure
+  // without adding them to dependencies (which would reset the interval or cause loops).
+  const teamsRef = useRef(teams);
+  const ratingsRef = useRef(ratings);
+  const judgesRef = useRef(knownJudges);
+
+  useEffect(() => { teamsRef.current = teams; }, [teams]);
+  useEffect(() => { ratingsRef.current = ratings; }, [ratings]);
+  useEffect(() => { judgesRef.current = knownJudges; }, [knownJudges]);
+
   // --- CLOUD SYNC LOGIC ---
 
   const syncToCloud = useCallback(async (currentTeams: Team[], currentRatings: Rating[], currentJudges: string[]) => {
@@ -86,17 +97,34 @@ const App: React.FC = () => {
         if (cloudData) {
           setIsOfflineMode(false);
           
+          const currentTeamsState = teamsRef.current;
+          const currentRatingsState = ratingsRef.current;
+          const currentJudgesState = judgesRef.current;
+          
           // Merge Strategies for In-Memory State on Poll:
           
-          // 1. Teams: If I am a judge, trust the cloud.
-          if (cloudData.teams && Array.isArray(cloudData.teams) && cloudData.teams.length > 0) {
-             setTeams(cloudData.teams);
+          // 1. Teams
+          if (cloudData.teams && Array.isArray(cloudData.teams)) {
+            if (currentRole === 'organizer') {
+              // Organizer Authority:
+              // If we are an organizer, we generally trust our local state because we are the ones editing it.
+              // Overwriting local with cloud causes "revert" bugs if the poll happens before our push lands.
+              // We only accept cloud teams if our local list is empty (initial load).
+              if (currentTeamsState.length === 0 && cloudData.teams.length > 0) {
+                setTeams(cloudData.teams);
+              }
+            } else {
+              // Judges always trust the cloud roster.
+              if (cloudData.teams.length > 0) {
+                setTeams(cloudData.teams);
+              }
+            }
           }
 
           // 2. Ratings: Merge Cloud ratings into Local state
           if (cloudData.ratings && Array.isArray(cloudData.ratings)) {
              // Separate ratings into "Mine" and "Others"
-             const myLocalRatings = ratings.filter(r => r.judgeId === currentJudgeName);
+             const myLocalRatings = currentRatingsState.filter(r => r.judgeId === currentJudgeName);
              const othersCloudRatings = cloudData.ratings.filter(r => r.judgeId !== currentJudgeName);
              const myCloudRatings = cloudData.ratings.filter(r => r.judgeId === currentJudgeName);
              
@@ -109,7 +137,8 @@ const App: React.FC = () => {
                    // I don't have this locally, but cloud has it -> I rated elsewhere
                    mergedMyRatings.push(cloudR);
                 } else {
-                   // I have it locally. Only overwrite if cloud is somehow newer (unlikely if active, but good for safety)
+                   // I have it locally. Only overwrite if cloud is strictly newer.
+                   // This protects against the poll reverting a just-saved rating (where local timestamp > cloud timestamp).
                    if (cloudR.lastUpdated > mergedMyRatings[localIdx].lastUpdated) {
                       mergedMyRatings[localIdx] = cloudR;
                    }
@@ -124,8 +153,9 @@ const App: React.FC = () => {
           }
         } else {
           // Cloud is empty/404. If we have local data (e.g. Organizer initializing), push it.
-          if (teams.length > 0 && currentRole === 'organizer') {
-            syncToCloud(teams, ratings, knownJudges);
+          // Use refs to check current state
+          if (teamsRef.current.length > 0 && currentRole === 'organizer') {
+            syncToCloud(teamsRef.current, ratingsRef.current, judgesRef.current);
           }
         }
         setIsSyncing(false);
@@ -140,7 +170,7 @@ const App: React.FC = () => {
       isMounted = false;
       clearInterval(interval);
     };
-  }, [accessPhrase, currentJudgeName]); // Add dependencies
+  }, [accessPhrase, currentJudgeName, currentRole, syncToCloud]);
 
   // Persistence
   useEffect(() => {
