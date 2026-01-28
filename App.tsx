@@ -16,7 +16,9 @@ const App: React.FC = () => {
   
   const [view, setView] = useState<'dashboard' | 'rating' | 'leaderboard' | 'teams'>('dashboard');
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
+  
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isOfflineMode, setIsOfflineMode] = useState(false);
 
   const [teams, setTeams] = useState<Team[]>(() => {
     const saved = localStorage.getItem('jamJudge_teams');
@@ -45,9 +47,9 @@ const App: React.FC = () => {
         judges: currentJudges,
         updatedAt: Date.now()
       });
-      if (!success) {
-        console.warn('Sync to cloud was unsuccessful.');
-      }
+      setIsOfflineMode(!success);
+    } catch (e) {
+      setIsOfflineMode(true);
     } finally {
       setIsSyncing(false);
     }
@@ -63,23 +65,28 @@ const App: React.FC = () => {
       setIsSyncing(true);
       const cloudData = await SyncService.pullData(accessPhrase);
       
-      if (isMounted && cloudData) {
-        if (cloudData.teams && cloudData.teams.length > 0) {
-           setTeams(cloudData.teams);
+      if (isMounted) {
+        if (cloudData) {
+          setIsOfflineMode(false);
+          if (cloudData.teams && cloudData.teams.length > 0) {
+             setTeams(cloudData.teams);
+          }
+          if (cloudData.ratings) setRatings(cloudData.ratings);
+          if (cloudData.judges) setKnownJudges(cloudData.judges);
+        } else {
+          // If null returned, it might be first time OR offline.
+          // We try to push our local state to initialize.
+          // If that fails, we are definitely offline.
+          if (teams.length > 0) {
+            syncToCloud(teams, ratings, knownJudges);
+          }
         }
-        if (cloudData.ratings) setRatings(cloudData.ratings);
-        if (cloudData.judges) setKnownJudges(cloudData.judges);
-      } else if (isMounted && !cloudData && accessPhrase) {
-        // If cloud is empty, let's establish our current local state as the master
-        syncToCloud(teams, ratings, knownJudges);
+        setIsSyncing(false);
       }
-      
-      if (isMounted) setIsSyncing(false);
     };
 
     loadCloudData();
     
-    // Polling for updates every 15 seconds to stay in sync with peers
     const interval = setInterval(loadCloudData, 15000);
     return () => {
       isMounted = false;
@@ -87,7 +94,7 @@ const App: React.FC = () => {
     };
   }, [accessPhrase]);
 
-  // Persistent Local Storage updates
+  // Persistence for smooth refresh experience
   useEffect(() => {
     if (currentJudgeName) {
       localStorage.setItem('jamJudge_name', currentJudgeName);
@@ -104,13 +111,11 @@ const App: React.FC = () => {
     setCurrentRole(role);
     setAccessPhrase(phrase);
     
-    // When logging in, establish yourself in the judge pool
     if (role === 'judge') {
       const updatedJudges = Array.from(new Set([...knownJudges, name]));
       setKnownJudges(updatedJudges);
       syncToCloud(teams, ratings, updatedJudges);
     } else {
-      // Just do a sync to establish presence
       syncToCloud(teams, ratings, knownJudges);
     }
   };
@@ -138,11 +143,10 @@ const App: React.FC = () => {
 
   const handleAddTeam = (team: Team) => {
     if (currentRole !== 'organizer') return;
-    setTeams(prev => {
-      const updated = [...prev, team];
-      syncToCloud(updated, ratings, knownJudges);
-      return updated;
-    });
+    const updated = [...teams, team];
+    setTeams(updated);
+    // We purposefully update local state FIRST so the UI is responsive even if sync fails
+    syncToCloud(updated, ratings, knownJudges);
   };
 
   const handleRemoveTeam = (id: string) => {
@@ -191,10 +195,10 @@ const App: React.FC = () => {
             </div>
             
             <div className="hidden md:flex items-center gap-2">
-              <div className="flex items-center gap-3 mr-6 px-4 py-2 bg-slate-50 rounded-xl border border-slate-100">
-                <div className={`w-2 h-2 rounded-full ${isSyncing ? 'bg-indigo-500 animate-pulse' : 'bg-green-500'}`} />
-                <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">
-                  {isSyncing ? 'Cloud Syncing...' : 'Live Cloud Sync'}
+              <div className={`flex items-center gap-3 mr-6 px-4 py-2 rounded-xl border ${isOfflineMode ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-slate-100'}`}>
+                <div className={`w-2 h-2 rounded-full ${isOfflineMode ? 'bg-amber-500' : isSyncing ? 'bg-indigo-500 animate-pulse' : 'bg-green-500'}`} />
+                <span className={`text-[9px] font-black uppercase tracking-widest ${isOfflineMode ? 'text-amber-600' : 'text-slate-400'}`}>
+                  {isOfflineMode ? 'Offline Mode' : isSyncing ? 'Syncing...' : 'Cloud Synced'}
                 </span>
               </div>
 

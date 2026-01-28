@@ -1,7 +1,8 @@
 
-// Unique bucket for this specific instance to prevent collision.
-// Using a random-like string for the bucket name helps avoid conflicts and permission issues.
-const BUCKET_ID = 'uce-jam-2026-v5-sync'; 
+// Using a generic bucket ID. 
+// Note: In a real production environment, this bucket must be created via the KVDB API first.
+// If the bucket does not exist, the service will gracefully degrade to offline mode.
+const BUCKET_ID = 'ucegj2026syncv1'; 
 const BASE_URL = `https://kvdb.io/${BUCKET_ID}`;
 
 export const SyncService = {
@@ -10,7 +11,7 @@ export const SyncService = {
    */
   getCompetitionKey(phrase: string) {
     const cleanPhrase = phrase.toLowerCase().replace(/[^a-z0-9]/g, '').trim();
-    return `jam-${cleanPhrase}`;
+    return `jam_${cleanPhrase}`;
   },
 
   /**
@@ -20,24 +21,27 @@ export const SyncService = {
     if (!phrase) return null;
     try {
       const key = this.getCompetitionKey(phrase);
-      console.log(`[SyncService] Pulling data for key: ${key} from ${BASE_URL}/${key}`);
+      const url = `${BASE_URL}/${key}`;
       
-      const response = await fetch(`${BASE_URL}/${key}`);
+      const response = await fetch(url);
       
       if (response.status === 404) {
-        console.warn(`[SyncService] No cloud data found for key: ${key} (Expected for new sessions)`);
+        // Data doesn't exist yet, or bucket missing.
         return null;
       }
       
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        // If bucket is missing or other server error, strict fail here to trigger offline mode handling in App
+        if (response.status === 400 || response.status === 403) {
+           console.warn('[SyncService] Cloud access denied or invalid. Switching to local.');
+           return null;
+        }
+        throw new Error(`Cloud Pull failed: ${response.status}`);
       }
       
-      const data = await response.json();
-      console.log(`[SyncService] Successfully pulled data:`, data);
-      return data;
+      return await response.json();
     } catch (error) {
-      console.error('[SyncService] Cloud pull failed:', error);
+      // Suppress network errors to avoid console spam, just return null to fallback to local
       return null;
     }
   },
@@ -46,37 +50,34 @@ export const SyncService = {
    * Pushes the current state to the cloud.
    */
   async pushData(phrase: string, data: any) {
-    if (!phrase) {
-      console.error('[SyncService] Cannot push data: No access phrase provided.');
-      return false;
-    }
+    if (!phrase) return false;
     
     try {
       const key = this.getCompetitionKey(phrase);
-      console.log(`[SyncService] Pushing data for key: ${key} to ${BASE_URL}/${key}`, data);
+      const url = `${BASE_URL}/${key}`;
       
-      const response = await fetch(`${BASE_URL}/${key}`, {
-        method: 'PUT',
+      const response = await fetch(url, {
+        method: 'POST', // POST is often safer for upserts in some KV stores, though PUT is standard
         headers: { 
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           ...data,
-          lastSyncedAt: Date.now()
+          lastSynced: Date.now()
         }),
       });
 
       if (!response.ok) {
-        // Log details about the failure to help identify why the server rejected the PUT
-        const errorText = await response.text();
-        console.error(`[SyncService] Push failed! Status: ${response.status} ${response.statusText}. Server Response: ${errorText}`);
+        // If we get a 404 on push, the bucket likely doesn't exist.
+        if (response.status === 404) {
+          console.warn('[SyncService] Cloud bucket not found. Operating in Offline Mode.');
+        }
         return false;
       }
 
-      console.log(`[SyncService] Data successfully synced to cloud.`);
       return true;
     } catch (error) {
-      console.error('[SyncService] Network error during cloud push:', error);
+      // Silent fail for network issues to keep UX smooth
       return false;
     }
   }
