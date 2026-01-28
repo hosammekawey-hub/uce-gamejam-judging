@@ -7,28 +7,54 @@ interface TeamManagementProps {
   currentRole: UserRole;
   onAddTeam: (team: Team) => void;
   onRemoveTeam: (id: string) => void;
-  // We'll use a hack to clear all by passing a special call, 
-  // but cleanly we should probably expose a clear prop. 
-  // For now, we'll iterate remove or assuming parent handles state if we empty it.
 }
 
 const TeamManagement: React.FC<TeamManagementProps> = ({ teams, currentRole, onAddTeam, onRemoveTeam }) => {
-  // Only Organizers can modify teams. Judges are strictly read-only for roster.
   const isManagementDisabled = currentRole !== 'organizer';
   
   const [newTeam, setNewTeam] = useState({ name: '', title: '', desc: '' });
   const [thumbnailBase64, setThumbnailBase64] = useState<string>('');
+  const [isProcessingImg, setIsProcessingImg] = useState(false);
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Helper to compress image
+  const processImage = (file: File): Promise<string> => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target?.result as string;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          // Limit to 300px width to keep JSON payload under 128KB KVDB limit
+          const scale = Math.min(1, 300 / img.width);
+          canvas.width = img.width * scale;
+          canvas.height = img.height * scale;
+          
+          const ctx = canvas.getContext('2d');
+          ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
+          
+          // Compress to JPEG 70% quality
+          resolve(canvas.toDataURL('image/jpeg', 0.7));
+        };
+      };
+    });
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setThumbnailBase64(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+      setIsProcessingImg(true);
+      try {
+        const compressed = await processImage(file);
+        setThumbnailBase64(compressed);
+      } catch (err) {
+        alert("Error processing image. Please try a smaller file.");
+      } finally {
+        setIsProcessingImg(false);
+      }
     }
   };
 
@@ -123,14 +149,16 @@ const TeamManagement: React.FC<TeamManagementProps> = ({ teams, currentRole, onA
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Team Banner</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Team Banner (Auto-Compressed)</label>
                   <div 
-                    onClick={() => fileInputRef.current?.click()}
+                    onClick={() => !isProcessingImg && fileInputRef.current?.click()}
                     className={`relative h-40 w-full rounded-[2rem] border-2 border-dashed transition-all cursor-pointer overflow-hidden flex flex-col items-center justify-center gap-2 ${
                       thumbnailBase64 ? 'border-indigo-400 bg-indigo-50/30' : 'border-slate-200 bg-slate-50 hover:border-slate-300'
-                    }`}
+                    } ${isProcessingImg ? 'opacity-50 cursor-wait' : ''}`}
                   >
-                    {thumbnailBase64 ? (
+                    {isProcessingImg ? (
+                      <span className="text-[10px] font-black uppercase tracking-widest animate-pulse">Compressing...</span>
+                    ) : thumbnailBase64 ? (
                       <>
                         <img src={thumbnailBase64} className="absolute inset-0 w-full h-full object-cover" alt="Preview" />
                         <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center">
@@ -169,7 +197,8 @@ const TeamManagement: React.FC<TeamManagementProps> = ({ teams, currentRole, onA
 
                 <button 
                   type="submit"
-                  className="w-full py-5 bg-slate-900 text-white font-black uppercase tracking-[0.3em] rounded-2xl hover:bg-indigo-600 transition-all shadow-xl active:scale-95 text-[10px]"
+                  disabled={isProcessingImg}
+                  className="w-full py-5 bg-slate-900 text-white font-black uppercase tracking-[0.3em] rounded-2xl hover:bg-indigo-600 transition-all shadow-xl active:scale-95 text-[10px] disabled:bg-slate-300"
                 >
                   Create Submission
                 </button>

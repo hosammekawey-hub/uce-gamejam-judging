@@ -142,6 +142,11 @@ export const SyncService = {
         body: JSON.stringify(mergedData),
       });
 
+      if (response.status === 413) {
+        alert("CRITICAL WARNING: Data size too large for Cloud Storage! \n\nThe sync failed because the teams have too many large images. \n\nPlease ask the organizer to delete some teams or re-upload images with lower quality.");
+        return false;
+      }
+
       if (response.status === 403) {
         isBackendUnavailable = true;
         return false;
