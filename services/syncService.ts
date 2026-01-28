@@ -17,8 +17,14 @@ interface CloudData {
 
 export const SyncService = {
   getCompetitionKey(phrase: string) {
-    const cleanPhrase = phrase.toLowerCase().replace(/[^a-z0-9]/g, '').trim();
-    return `jam_${cleanPhrase}`;
+    // CRITICAL FIX: Both 'admin' (Organizer) and 'mask' (Judge) must point to the SAME data key.
+    // The organizer created data under 'jam_admin', so judges must read from there too.
+    const normalized = phrase.toLowerCase().trim();
+    if (normalized === 'mask' || normalized === 'admin') {
+      return 'jam_admin';
+    }
+    // Fallback for other phrases (if any)
+    return `jam_${normalized.replace(/[^a-z0-9]/g, '')}`;
   },
 
   async pullData(phrase: string): Promise<CloudData | null> {
