@@ -4,6 +4,7 @@ import { Contestant, Rating, Judge, UserRole, Criterion, CompetitionConfig } fro
 
 interface DashboardProps {
   title: string;
+  competitionId?: string;
   rubric: Criterion[];
   teams: Contestant[];
   ratings: Rating[];
@@ -19,7 +20,8 @@ interface DashboardProps {
 }
 
 const Dashboard: React.FC<DashboardProps> = ({ 
-  title, 
+  title,
+  competitionId,
   rubric, 
   teams, 
   ratings, 
@@ -136,6 +138,12 @@ const Dashboard: React.FC<DashboardProps> = ({
           <h1 className="text-4xl md:text-6xl font-black text-slate-900 tracking-tight leading-none uppercase">
             {title}
           </h1>
+          {competitionId && (
+            <div className="mt-4 inline-flex items-center gap-2 px-4 py-1.5 bg-slate-100 rounded-lg border border-slate-200">
+               <span className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">ID:</span>
+               <code className="text-sm font-bold text-slate-700 select-all">{competitionId}</code>
+            </div>
+          )}
           <p className="text-slate-500 font-bold mt-4 text-lg">
             {currentRole === 'organizer' 
               ? `Management Console: ${teams.length} entries registered.` 

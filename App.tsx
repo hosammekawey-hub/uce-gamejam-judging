@@ -395,6 +395,7 @@ const App: React.FC = () => {
         {view === 'dashboard' && (
           <Dashboard 
             title={config.title}
+            competitionId={config.competitionId}
             rubric={config.rubric}
             teams={contestants} 
             ratings={ratings} 
