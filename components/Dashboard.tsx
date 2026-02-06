@@ -1,19 +1,80 @@
 
-import React, { useState } from 'react';
-import { Team, Rating, Judge, UserRole } from '../types';
-import { RUBRIC } from '../constants';
+import React, { useState, useEffect } from 'react';
+import { Contestant, Rating, Judge, UserRole, Criterion } from '../types';
 
 interface DashboardProps {
-  teams: Team[];
+  title: string;
+  rubric: Criterion[];
+  teams: Contestant[];
   ratings: Rating[];
   currentJudge: string;
   currentRole: UserRole;
   otherJudges: Judge[];
-  onSelectTeam: (team: Team) => void;
+  onSelectTeam: (team: Contestant) => void;
+  tieBreakers?: { title: string; question: string }[];
+  onUpdateConfig?: (rubric: Criterion[], tieBreakers: { title: string; question: string }[]) => void;
+  canEditRubric?: boolean;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ teams, ratings, currentJudge, currentRole, otherJudges, onSelectTeam }) => {
+const Dashboard: React.FC<DashboardProps> = ({ 
+  title, 
+  rubric, 
+  teams, 
+  ratings, 
+  currentJudge, 
+  currentRole, 
+  otherJudges, 
+  onSelectTeam, 
+  tieBreakers,
+  onUpdateConfig,
+  canEditRubric
+}) => {
   const [showRubric, setShowRubric] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  
+  // Local state for editing
+  const [tempRubric, setTempRubric] = useState<Criterion[]>([]);
+  const [tempTieBreakers, setTempTieBreakers] = useState<{ title: string; question: string }[]>([]);
+
+  useEffect(() => {
+    if (showRubric) {
+      setTempRubric(JSON.parse(JSON.stringify(rubric)));
+      setTempTieBreakers(tieBreakers ? JSON.parse(JSON.stringify(tieBreakers)) : []);
+      setIsEditing(false);
+    }
+  }, [showRubric, rubric, tieBreakers]);
+
+  const handleSave = () => {
+    // Basic validation
+    const totalWeight = tempRubric.reduce((acc, c) => acc + c.weight, 0);
+    if (Math.abs(totalWeight - 1.0) > 0.05) {
+        alert(`Total weight must equal 100%. Current: ${(totalWeight * 100).toFixed(0)}%`);
+        return;
+    }
+    
+    if (onUpdateConfig) {
+        onUpdateConfig(tempRubric, tempTieBreakers);
+    }
+    setIsEditing(false);
+  };
+
+  const handleRubricChange = (idx: number, field: keyof Criterion, value: any) => {
+    const updated = [...tempRubric];
+    updated[idx] = { ...updated[idx], [field]: value };
+    setTempRubric(updated);
+  };
+
+  const handleGuidelineChange = (cIdx: number, gIdx: number, field: 'label' | 'text' | 'range', value: string) => {
+    const updated = [...tempRubric];
+    updated[cIdx].guidelines[gIdx] = { ...updated[cIdx].guidelines[gIdx], [field]: value };
+    setTempRubric(updated);
+  };
+
+  const handleTieBreakerChange = (idx: number, field: 'title' | 'question', value: string) => {
+    const updated = [...tempTieBreakers];
+    updated[idx] = { ...updated[idx], [field]: value };
+    setTempTieBreakers(updated);
+  };
 
   const getTeamStatus = (teamId: string) => {
     return ratings.some(r => r.teamId === teamId && r.judgeId === currentJudge);
@@ -28,13 +89,13 @@ const Dashboard: React.FC<DashboardProps> = ({ teams, ratings, currentJudge, cur
       {/* Header with Rubric Toggle */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-8">
         <div>
-          <h1 className="text-6xl font-black text-slate-900 tracking-tight leading-none uppercase">
-            UCE Global <span className="text-indigo-600">Game Jam</span>
+          <h1 className="text-4xl md:text-6xl font-black text-slate-900 tracking-tight leading-none uppercase">
+            {title}
           </h1>
           <p className="text-slate-500 font-bold mt-4 text-lg">
             {currentRole === 'organizer' 
-              ? `Management Console: ${teams.length} submissions registered.` 
-              : `Judging Portal: Reviewing ${teams.length} submissions.`}
+              ? `Management Console: ${teams.length} entries registered.` 
+              : `Judging Portal: Reviewing ${teams.length} entries.`}
           </p>
         </div>
         <button 
@@ -44,7 +105,7 @@ const Dashboard: React.FC<DashboardProps> = ({ teams, ratings, currentJudge, cur
           <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
             <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clipRule="evenodd" />
           </svg>
-          Judging Rubric
+          Judging Criteria
         </button>
       </div>
 
@@ -103,12 +164,17 @@ const Dashboard: React.FC<DashboardProps> = ({ teams, ratings, currentJudge, cur
         </div>
       </div>
 
-      {/* Team Grid */}
+      {/* Contestant Grid */}
       <div className="space-y-10">
         <div className="flex items-center gap-5">
           <div className="w-3 h-12 bg-indigo-600 rounded-full shadow-lg shadow-indigo-600/30" />
           <h2 className="text-4xl font-black text-slate-900 tracking-tight leading-none uppercase">Active Entries</h2>
         </div>
+        {teams.length === 0 ? (
+            <div className="text-center py-12 bg-slate-100 rounded-[3rem] border border-slate-200">
+                <p className="text-slate-400 font-black uppercase tracking-widest text-sm">No entries yet. Organizer must add participants.</p>
+            </div>
+        ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-10">
           {teams.map(team => {
             const isRated = getTeamStatus(team.id);
@@ -118,12 +184,16 @@ const Dashboard: React.FC<DashboardProps> = ({ teams, ratings, currentJudge, cur
                 onClick={() => onSelectTeam(team)}
                 className="group bg-white rounded-[3rem] border border-slate-200 shadow-lg hover:shadow-[0_40px_80px_rgba(0,0,0,0.1)] hover:border-indigo-600 transition-all cursor-pointer overflow-hidden relative transform hover:-translate-y-4"
               >
-                <div className="aspect-video relative overflow-hidden">
-                  <img src={team.thumbnail} alt={team.gameTitle} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-1000" />
+                <div className="aspect-video relative overflow-hidden bg-slate-200">
+                  {team.thumbnail ? (
+                     <img src={team.thumbnail} alt={team.title} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-1000" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-6xl">🏆</div>
+                  )}
                   <div className="absolute inset-0 bg-gradient-to-t from-slate-900/90 via-slate-900/20 to-transparent" />
                   <div className="absolute bottom-8 left-8 right-8">
-                    <h3 className="text-white font-black text-3xl leading-tight tracking-tight drop-shadow-2xl">{team.gameTitle}</h3>
-                    <p className="text-indigo-400 text-xs font-black uppercase tracking-[0.3em] mt-3">Team {team.name}</p>
+                    <h3 className="text-white font-black text-3xl leading-tight tracking-tight drop-shadow-2xl">{team.title}</h3>
+                    <p className="text-indigo-400 text-xs font-black uppercase tracking-[0.3em] mt-3">{team.name}</p>
                   </div>
                   {isRated && (
                     <div className="absolute top-6 right-6 bg-green-500 text-white px-5 py-2 rounded-2xl shadow-xl flex items-center gap-2.5 text-[10px] font-black uppercase tracking-[0.2em] border-2 border-white/20">
@@ -145,7 +215,7 @@ const Dashboard: React.FC<DashboardProps> = ({ teams, ratings, currentJudge, cur
                           ? 'bg-slate-100 text-slate-600 hover:bg-indigo-600 hover:text-white shadow-sm' 
                           : 'bg-indigo-600 text-white hover:bg-indigo-500 shadow-xl shadow-indigo-600/30'
                     }`}>
-                      {currentRole === 'organizer' ? 'View Official Record' : (isRated ? 'Update' : 'Review')}
+                      {currentRole === 'organizer' ? 'View Record' : (isRated ? 'Update' : 'Evaluate')}
                     </button>
                   </div>
                 </div>
@@ -153,6 +223,7 @@ const Dashboard: React.FC<DashboardProps> = ({ teams, ratings, currentJudge, cur
             );
           })}
         </div>
+        )}
       </div>
 
       {/* Rubric Modal */}
@@ -162,47 +233,199 @@ const Dashboard: React.FC<DashboardProps> = ({ teams, ratings, currentJudge, cur
             <div className="px-12 py-10 border-b border-slate-100 flex justify-between items-center bg-slate-50">
               <div>
                 <h2 className="text-4xl font-black text-slate-900 tracking-tight">Judging Guidelines</h2>
-                <p className="text-slate-500 font-bold mt-2">Official scoring breakdown for GGJ 2026.</p>
+                <p className="text-slate-500 font-bold mt-2">Official scoring breakdown.</p>
               </div>
-              <button 
-                onClick={() => setShowRubric(false)}
-                className="w-14 h-14 bg-white hover:bg-rose-500 hover:text-white rounded-2xl transition-all text-slate-400 shadow-xl flex items-center justify-center border border-slate-200"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
+              <div className="flex gap-4">
+                  {canEditRubric && !isEditing && (
+                      <button 
+                        onClick={() => setIsEditing(true)}
+                        className="px-6 py-3 bg-indigo-100 text-indigo-700 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-indigo-200 transition-all border border-indigo-200"
+                      >
+                        Edit Rubric
+                      </button>
+                  )}
+                  <button 
+                    onClick={() => setShowRubric(false)}
+                    className="w-14 h-14 bg-white hover:bg-rose-500 hover:text-white rounded-2xl transition-all text-slate-400 shadow-xl flex items-center justify-center border border-slate-200"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+              </div>
             </div>
+            
             <div className="flex-1 overflow-y-auto p-12 space-y-20">
-              {RUBRIC.map(c => (
-                <section key={c.id}>
-                  <div className="flex items-center gap-6 mb-10">
-                    <div className="bg-indigo-600 text-white px-5 py-2.5 rounded-2xl font-black text-sm tracking-widest shadow-xl shadow-indigo-600/30">
-                      {Math.round(c.weight * 100)}%
+              {/* EDIT MODE */}
+              {isEditing ? (
+                  <>
+                    <div className="bg-amber-50 border border-amber-200 p-6 rounded-3xl mb-8">
+                        <p className="text-amber-800 font-bold text-sm">Editing Mode Active</p>
+                        <p className="text-amber-700 text-xs mt-1">Changes here will update the rubric for all judges instantly. Ensure Total Weight sums to 100%.</p>
                     </div>
-                    <h3 className="text-3xl font-black text-slate-900 tracking-tight leading-none uppercase">{c.name}</h3>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    {c.guidelines.map((g, idx) => (
-                      <div key={idx} className="bg-slate-50 p-8 rounded-[2.5rem] border border-slate-100 hover:border-indigo-200 transition-all group/card">
-                        <div className="flex justify-between items-center mb-6">
-                          <span className="text-[10px] font-black uppercase tracking-[0.25em] text-indigo-600 bg-indigo-50 px-4 py-1.5 rounded-xl border border-indigo-100">{g.label}</span>
-                          <span className="text-xs font-black text-slate-400 tracking-widest group-hover/card:text-slate-900 transition-colors">Range: {g.range}</span>
-                        </div>
-                        <p className="text-sm text-slate-700 font-bold leading-relaxed">{g.text}</p>
-                      </div>
+                    {tempRubric.map((c, idx) => (
+                        <section key={c.id} className="bg-slate-50 p-8 rounded-[2.5rem] border border-slate-200 relative">
+                            <div className="flex flex-col md:flex-row gap-6 mb-6">
+                                <div className="flex-1 space-y-2">
+                                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Criterion Name</label>
+                                    <input 
+                                        value={c.name} 
+                                        onChange={e => handleRubricChange(idx, 'name', e.target.value)}
+                                        className="w-full font-black text-2xl bg-white border border-slate-200 rounded-xl px-4 py-2"
+                                    />
+                                </div>
+                                <div className="w-32 space-y-2">
+                                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Weight (0-1)</label>
+                                    <input 
+                                        type="number" 
+                                        step="0.05"
+                                        value={c.weight}
+                                        onChange={e => handleRubricChange(idx, 'weight', parseFloat(e.target.value))}
+                                        className="w-full font-black text-2xl bg-white border border-slate-200 rounded-xl px-4 py-2 text-center"
+                                    />
+                                </div>
+                            </div>
+                            <div className="mb-6 space-y-2">
+                                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Description</label>
+                                <textarea 
+                                    value={c.description} 
+                                    onChange={e => handleRubricChange(idx, 'description', e.target.value)}
+                                    className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm font-medium"
+                                />
+                            </div>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                {c.guidelines.map((g, gIdx) => (
+                                    <div key={gIdx} className="bg-white p-4 rounded-2xl border border-slate-200 space-y-2">
+                                        <div className="flex gap-2">
+                                            <input 
+                                                value={g.label} 
+                                                onChange={e => handleGuidelineChange(idx, gIdx, 'label', e.target.value)}
+                                                className="flex-1 text-[10px] font-black uppercase tracking-widest bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-indigo-600"
+                                            />
+                                            <input 
+                                                value={g.range} 
+                                                onChange={e => handleGuidelineChange(idx, gIdx, 'range', e.target.value)}
+                                                className="w-16 text-[10px] font-black text-center bg-slate-50 border border-slate-200 rounded-lg px-2 py-1"
+                                            />
+                                        </div>
+                                        <textarea 
+                                            value={g.text} 
+                                            onChange={e => handleGuidelineChange(idx, gIdx, 'text', e.target.value)}
+                                            className="w-full text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 resize-none h-16"
+                                        />
+                                    </div>
+                                ))}
+                            </div>
+                        </section>
                     ))}
-                  </div>
-                </section>
-              ))}
+
+                    <section className="pt-8 border-t border-slate-200">
+                        <h3 className="text-xl font-black text-slate-900 uppercase tracking-widest mb-6">Tie Breakers</h3>
+                        <div className="space-y-4">
+                            {tempTieBreakers.map((tb, i) => (
+                                <div key={i} className="bg-slate-50 p-6 rounded-2xl border border-slate-200 flex flex-col gap-3">
+                                    <input 
+                                        value={tb.title} 
+                                        onChange={e => handleTieBreakerChange(i, 'title', e.target.value)}
+                                        className="font-black text-sm uppercase bg-white border border-slate-200 rounded-lg px-3 py-2"
+                                        placeholder="Question Title"
+                                    />
+                                    <textarea 
+                                        value={tb.question}
+                                        onChange={e => handleTieBreakerChange(i, 'question', e.target.value)}
+                                        className="text-sm bg-white border border-slate-200 rounded-lg px-3 py-2 resize-none h-16"
+                                        placeholder="Question Text"
+                                    />
+                                </div>
+                            ))}
+                        </div>
+                    </section>
+                  </>
+              ) : (
+                /* READ ONLY MODE */
+                <>
+                  {rubric.map(c => (
+                    <section key={c.id}>
+                      <div className="flex items-center gap-6 mb-10">
+                        <div className="bg-indigo-600 text-white px-5 py-2.5 rounded-2xl font-black text-sm tracking-widest shadow-xl shadow-indigo-600/30">
+                          {Math.round(c.weight * 100)}%
+                        </div>
+                        <h3 className="text-3xl font-black text-slate-900 tracking-tight leading-none uppercase">{c.name}</h3>
+                      </div>
+                      <p className="text-slate-500 font-bold mb-6 italic">{c.description}</p>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                        {c.guidelines.map((g, idx) => (
+                          <div key={idx} className="bg-slate-50 p-8 rounded-[2.5rem] border border-slate-100 hover:border-indigo-200 transition-all group/card">
+                            <div className="flex justify-between items-center mb-6">
+                              <span className="text-[10px] font-black uppercase tracking-[0.25em] text-indigo-600 bg-indigo-50 px-4 py-1.5 rounded-xl border border-indigo-100">{g.label}</span>
+                              <span className="text-xs font-black text-slate-400 tracking-widest group-hover/card:text-slate-900 transition-colors">Range: {g.range}</span>
+                            </div>
+                            <p className="text-sm text-slate-700 font-bold leading-relaxed">{g.text}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+                  ))}
+
+                  {tieBreakers && tieBreakers.length > 0 && (
+                    <section className="border-t border-slate-100 pt-16">
+                      <h3 className="text-3xl font-black text-slate-900 tracking-tight leading-none uppercase mb-8">⚖️ Tie-Breaker Questions</h3>
+                      <div className="bg-indigo-50 rounded-[2.5rem] p-10 space-y-6 border border-indigo-100">
+                          <p className="text-indigo-900 font-bold text-lg">In the event of a tie between two top teams, use these questions to decide the winner:</p>
+                          <ul className="space-y-4">
+                            {tieBreakers.map((tb, i) => (
+                                <li key={i} className="flex items-start gap-4">
+                                  <span className="w-8 h-8 rounded-full bg-indigo-200 text-indigo-700 flex items-center justify-center font-black text-sm flex-shrink-0">{i + 1}</span>
+                                  <div>
+                                    <span className="block font-black text-indigo-900 uppercase tracking-wide text-xs mb-1">{tb.title}</span>
+                                    <span className="text-indigo-800 font-medium">{tb.question}</span>
+                                  </div>
+                                </li>
+                            ))}
+                          </ul>
+                      </div>
+                    </section>
+                  )}
+
+                  <section>
+                    <h3 className="text-3xl font-black text-slate-900 tracking-tight leading-none uppercase mb-8">🛑 Disqualification Check</h3>
+                    <div className="bg-rose-50 rounded-[2.5rem] p-10 border border-rose-100 flex items-center gap-6">
+                        <div className="w-16 h-16 rounded-2xl bg-rose-100 text-rose-500 flex items-center justify-center text-3xl">🚫</div>
+                        <div>
+                          <p className="text-rose-900 font-black uppercase tracking-widest text-sm mb-2">Mandatory Check</p>
+                          <p className="text-rose-800 font-bold text-lg">Did the team use offensive or discriminatory content? (Yes/No)</p>
+                        </div>
+                    </div>
+                  </section>
+                </>
+              )}
             </div>
-            <div className="px-12 py-10 bg-slate-50 border-t border-slate-100 flex justify-end">
-              <button 
-                onClick={() => setShowRubric(false)}
-                className="px-12 py-5 bg-slate-900 text-white rounded-[1.5rem] font-black text-xs uppercase tracking-[0.3em] shadow-2xl active:scale-95 hover:bg-indigo-600"
-              >
-                Close Rubric
-              </button>
+
+            <div className="px-12 py-10 bg-slate-50 border-t border-slate-100 flex justify-end gap-4">
+              {isEditing ? (
+                  <>
+                    <button 
+                        onClick={() => setIsEditing(false)}
+                        className="px-8 py-5 bg-white border border-slate-200 text-slate-500 rounded-[1.5rem] font-black text-xs uppercase tracking-[0.3em] hover:bg-slate-50"
+                    >
+                        Cancel
+                    </button>
+                    <button 
+                        onClick={handleSave}
+                        className="px-12 py-5 bg-indigo-600 text-white rounded-[1.5rem] font-black text-xs uppercase tracking-[0.3em] shadow-xl hover:bg-indigo-500"
+                    >
+                        Save Changes
+                    </button>
+                  </>
+              ) : (
+                  <button 
+                    onClick={() => setShowRubric(false)}
+                    className="px-12 py-5 bg-slate-900 text-white rounded-[1.5rem] font-black text-xs uppercase tracking-[0.3em] shadow-2xl active:scale-95 hover:bg-indigo-600"
+                  >
+                    Close Rubric
+                  </button>
+              )}
             </div>
           </div>
         </div>

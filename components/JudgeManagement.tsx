@@ -1,10 +1,10 @@
 
 import React, { useState } from 'react';
-import { Judge, Team } from '../types';
+import { Judge, Contestant } from '../types';
 
 interface JudgeManagementProps {
   judges: Judge[];
-  teams: Team[];
+  teams: Contestant[];
   onRemoveJudge: (judgeId: string) => void;
 }
 

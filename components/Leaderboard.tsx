@@ -1,33 +1,32 @@
 
 import React from 'react';
-import { Team, Rating, Judge } from '../types';
-import { RUBRIC } from '../constants';
+import { Contestant, Rating, Criterion } from '../types';
 
 interface LeaderboardProps {
-  teams: Team[];
+  teams: Contestant[];
   ratings: Rating[];
-  otherJudges: Judge[];
+  rubric: Criterion[];
 }
 
-const Leaderboard: React.FC<LeaderboardProps> = ({ teams, ratings, otherJudges }) => {
+const Leaderboard: React.FC<LeaderboardProps> = ({ teams, ratings, rubric }) => {
   const results = teams.map(team => {
     const teamRatings = ratings.filter(r => r.teamId === team.id);
     const isDQ = teamRatings.some(r => r.isDisqualified);
     
-    const calcWeighted = (scores: Record<string, number>) => {
-      return RUBRIC.reduce((acc, c) => acc + (scores[c.id] * c.weight), 0);
-    };
-
-    const judgeScores = teamRatings.map(r => calcWeighted(r.scores));
-    
-    // No more simulation. Use real scores from the judging panel.
-    const average = judgeScores.length > 0 
-      ? judgeScores.reduce((a, b) => a + b, 0) / judgeScores.length 
-      : 0;
+    // ALIGNMENT FIX: Calculate average per criterion first, then apply weights.
+    // This matches the logic in App.tsx (Organizer View) to ensure scores are identical.
+    let calculatedAverage = 0;
+    if (teamRatings.length > 0) {
+        rubric.forEach(criterion => {
+            const sumScores = teamRatings.reduce((acc, r) => acc + (r.scores[criterion.id] || 0), 0);
+            const avgScore = sumScores / teamRatings.length;
+            calculatedAverage += avgScore * criterion.weight;
+        });
+    }
 
     return {
       team,
-      average: isDQ ? 0 : average,
+      average: isDQ ? 0 : calculatedAverage,
       isDQ,
       judgesCount: teamRatings.length
     };
@@ -43,7 +42,7 @@ const Leaderboard: React.FC<LeaderboardProps> = ({ teams, ratings, otherJudges }
         </div>
         <h2 className="text-6xl md:text-8xl font-black text-slate-900 tracking-tight leading-none">The Podium</h2>
         <p className="text-xl text-slate-500 font-bold max-w-2xl mx-auto leading-relaxed">
-          The top technical and creative performers of UCE GGJ 2026.
+          The top performers of the event.
         </p>
       </div>
 
@@ -60,7 +59,7 @@ const Leaderboard: React.FC<LeaderboardProps> = ({ teams, ratings, otherJudges }
                 <div className="absolute -bottom-5 left-1/2 -translate-x-1/2 bg-slate-200 text-slate-700 px-6 py-2 rounded-full font-black text-sm shadow-xl border-4 border-white">2ND</div>
               </div>
               <div className="text-center mb-8">
-                <h4 className="font-black text-slate-900 text-2xl tracking-tight">{winners[1].team.gameTitle}</h4>
+                <h4 className="font-black text-slate-900 text-2xl tracking-tight">{winners[1].team.title}</h4>
                 <p className="text-xs font-black text-slate-400 uppercase tracking-widest mt-2">{winners[1].team.name}</p>
               </div>
               <div className="w-full h-40 bg-white rounded-t-[3.5rem] flex flex-col items-center justify-center border border-slate-200 shadow-xl">
@@ -80,7 +79,7 @@ const Leaderboard: React.FC<LeaderboardProps> = ({ teams, ratings, otherJudges }
                 <div className="absolute -bottom-6 left-1/2 -translate-x-1/2 bg-amber-400 text-white px-8 py-2 rounded-full font-black text-2xl shadow-2xl border-4 border-white">1ST</div>
               </div>
               <div className="text-center mb-10">
-                <h4 className="text-3xl font-black text-slate-900 tracking-tight">{winners[0].team.gameTitle}</h4>
+                <h4 className="text-3xl font-black text-slate-900 tracking-tight">{winners[0].team.title}</h4>
                 <p className="text-xs font-black text-amber-600 uppercase tracking-widest mt-2">{winners[0].team.name}</p>
               </div>
               <div className="w-full h-64 bg-slate-900 rounded-t-[4.5rem] flex flex-col items-center justify-center shadow-2xl">
@@ -100,7 +99,7 @@ const Leaderboard: React.FC<LeaderboardProps> = ({ teams, ratings, otherJudges }
                 <div className="absolute -bottom-5 left-1/2 -translate-x-1/2 bg-orange-200 text-orange-800 px-6 py-2 rounded-full font-black text-sm shadow-xl border-4 border-white">3RD</div>
               </div>
               <div className="text-center mb-8">
-                <h4 className="font-black text-slate-900 text-2xl tracking-tight">{winners[2].team.gameTitle}</h4>
+                <h4 className="font-black text-slate-900 text-2xl tracking-tight">{winners[2].team.title}</h4>
                 <p className="text-xs font-black text-slate-400 uppercase tracking-widest mt-2">{winners[2].team.name}</p>
               </div>
               <div className="w-full h-32 bg-white rounded-t-[3.5rem] flex flex-col items-center justify-center border border-slate-200 shadow-xl">
@@ -124,14 +123,14 @@ const Leaderboard: React.FC<LeaderboardProps> = ({ teams, ratings, otherJudges }
       <div className="bg-white rounded-[3.5rem] border border-slate-200 shadow-2xl overflow-hidden mt-16">
         <div className="px-10 py-8 border-b border-slate-100 flex justify-between items-center bg-slate-50">
           <h3 className="font-black text-slate-900 text-2xl tracking-tight">Leaderboard History</h3>
-          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Verified 2026 Standings</span>
+          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Verified Standings</span>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="text-[11px] uppercase tracking-[0.3em] text-slate-400 bg-slate-50/50">
                 <th className="px-10 py-6 font-black">Rank</th>
-                <th className="px-10 py-6 font-black">Team / Game</th>
+                <th className="px-10 py-6 font-black">Entry</th>
                 <th className="px-10 py-6 font-black">Evaluations</th>
                 <th className="px-10 py-6 font-black text-right">Avg Score</th>
               </tr>
@@ -151,10 +150,14 @@ const Leaderboard: React.FC<LeaderboardProps> = ({ teams, ratings, otherJudges }
                   <td className="px-10 py-8">
                     <div className="flex items-center gap-6">
                       <div className="w-16 h-10 rounded-xl overflow-hidden shadow-inner flex-shrink-0 border border-slate-200">
-                         <img src={res.team.thumbnail} className="w-full h-full object-cover" alt="" />
+                         {res.team.thumbnail ? (
+                           <img src={res.team.thumbnail} className="w-full h-full object-cover" alt="" />
+                         ) : (
+                           <div className="w-full h-full bg-slate-200 flex items-center justify-center">🏆</div>
+                         )}
                       </div>
                       <div>
-                        <p className="font-black text-slate-900 text-lg group-hover:text-indigo-600 transition-colors">{res.team.gameTitle}</p>
+                        <p className="font-black text-slate-900 text-lg group-hover:text-indigo-600 transition-colors">{res.team.title}</p>
                         <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">{res.team.name}</p>
                       </div>
                     </div>

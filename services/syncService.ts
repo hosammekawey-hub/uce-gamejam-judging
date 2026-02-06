@@ -1,200 +1,317 @@
-import { Rating, Team } from '../types';
 
-// We use a specific bucket ID for this event.
-const BUCKET_ID = 'EsoeNYZt9bNthRpMz2jCTU'; 
-const WRITE_KEY = ''; // Optional secret key if bucket is protected
+import { createClient, RealtimeChannel, AuthChangeEvent, Session } from '@supabase/supabase-js';
+import { Rating, Contestant, CompetitionConfig, GlobalSettings, Judge, UserProfile } from '../types';
 
-const BASE_URL = `https://kvdb.io/${BUCKET_ID}`;
+// --- CONFIGURATION ---
+// 1. Your specific Project URL
+const SUPABASE_URL = 'https://aefegdmffmwrukeoqjbm.supabase.co'; 
 
-let isBackendUnavailable = false;
+// 2. Paste your "Publishable API Key" (also known as 'anon' public key) here.
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFlZmVnZG1mZm13cnVrZW9xamJtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk4OTY0OTEsImV4cCI6MjA4NTQ3MjQ5MX0.ejK09pWZJimLzpWb8OtDKh7Nc-18rDUy6aRivE_ZLwg';
 
-interface CloudData {
-  teams: Team[];
-  ratings: Rating[];
-  judges: string[];
-  updatedAt: number;
-}
-
-interface BannedLists {
-  teams: string[];
-  judges: string[];
-}
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
+    auth: { persistSession: true }
+});
 
 export const SyncService = {
-  getCompetitionKey(phrase: string) {
-    const normalized = phrase.toLowerCase().trim();
-    if (normalized === 'mask' || normalized === 'admin') {
-      return 'jam_admin';
-    }
-    return `jam_${normalized.replace(/[^a-z0-9]/g, '')}`;
+  
+  // --- AUTHENTICATION ---
+  
+  // CRITICAL: Subscribe to auth changes (SIGN_IN, SIGN_OUT, TOKEN_REFRESH)
+  // This handles the OAuth redirect hash automatically.
+  onAuthStateChange(callback: (event: AuthChangeEvent, session: Session | null) => void) {
+      return supabase.auth.onAuthStateChange(callback);
   },
 
-  async pullData(phrase: string): Promise<CloudData | null> {
-    if (!phrase || isBackendUnavailable) return null;
-    try {
-      const key = this.getCompetitionKey(phrase);
-      const url = `${BASE_URL}/${key}?t=${Date.now()}`;
-      
-      const headers: HeadersInit = {};
-      if (WRITE_KEY) {
-         const auth = btoa(`${BUCKET_ID}:${WRITE_KEY}`);
-         headers['Authorization'] = `Basic ${auth}`;
-      }
-
-      const response = await fetch(url, { headers });
-      
-      if (response.status === 404) return null;
-
-      if (response.status === 403) {
-        console.warn('[SyncService] Read permission denied. Switching to offline mode.');
-        isBackendUnavailable = true;
-        return null;
-      }
-      
-      if (!response.ok) {
-        isBackendUnavailable = true; 
-        return null;
-      }
-      
-      return await response.json();
-    } catch (error) {
-      return null;
-    }
-  },
-
-  /**
-   * Smart Sync: Fetches latest cloud data, merges with local changes, then pushes.
-   * Handles Banned IDs (Tombstones) to prevent reviving deleted items.
-   */
-  async pushData(
-    phrase: string, 
-    localData: CloudData, 
-    role: 'judge' | 'organizer',
-    banned?: BannedLists
-  ) {
-    if (!phrase || isBackendUnavailable) return false;
-    
-    try {
-      const key = this.getCompetitionKey(phrase);
-      const url = `${BASE_URL}/${key}`;
-      
-      const headers: HeadersInit = { 'Content-Type': 'application/json' };
-      if (WRITE_KEY) {
-        const auth = btoa(`${BUCKET_ID}:${WRITE_KEY}`);
-        headers['Authorization'] = `Basic ${auth}`;
-      }
-
-      // 1. Fetch latest cloud data
-      let remoteData: CloudData | null = null;
+  async signInWithGoogle() {
       try {
-        const fetchRes = await fetch(`${url}?t=${Date.now()}`, { headers });
-        if (fetchRes.ok) {
-          remoteData = await fetchRes.json();
-        }
-      } catch (e) {
-        return false;
-      }
-
-      // 2. MERGE LOGIC
-      let mergedData: CloudData = { ...localData };
-      const bannedJudges = new Set(banned?.judges || []);
-      const bannedTeams = new Set(banned?.teams || []);
-
-      if (remoteData) {
-        // A. Merge Ratings 
-        const mergedRatingsMap = new Map<string, Rating>();
-
-        if (Array.isArray(remoteData.ratings)) {
-          // Add remote ratings ONLY if they aren't from banned judges/teams
-          remoteData.ratings.forEach(r => {
-            if (!bannedJudges.has(r.judgeId) && !bannedTeams.has(r.teamId)) {
-              mergedRatingsMap.set(`${r.judgeId}_${r.teamId}`, r);
-            }
-          });
-        }
-
-        // Overlay local ratings
-        localData.ratings.forEach(localRating => {
-          if (!bannedJudges.has(localRating.judgeId) && !bannedTeams.has(localRating.teamId)) {
-            const id = `${localRating.judgeId}_${localRating.teamId}`;
-            const remoteRating = mergedRatingsMap.get(id);
-
-            if (!remoteRating) {
-              mergedRatingsMap.set(id, localRating);
-            } else {
-              if (localRating.lastUpdated > remoteRating.lastUpdated) {
-                mergedRatingsMap.set(id, localRating);
+          const { data, error } = await supabase.auth.signInWithOAuth({
+              provider: 'google',
+              options: {
+                  redirectTo: window.location.origin,
+                  // Standard flow to prevent 403s on unverified apps
+                  queryParams: {
+                      access_type: 'online', 
+                      prompt: 'select_account'
+                  }
               }
-            }
+          });
+          
+          if (error) console.error("Supabase Auth Error:", error.message);
+          return { data, error };
+      } catch (err) {
+          console.error("Auth Exception:", err);
+          return { data: null, error: err as any };
+      }
+  },
+
+  async signOut() {
+      return await supabase.auth.signOut();
+  },
+
+  async getCurrentUser(): Promise<UserProfile | null> {
+      // 1. Check local session first (faster)
+      const { data: { session } } = await supabase.auth.getSession();
+      let user = session?.user;
+
+      // 2. If no session, try fetching from server
+      if (!user) {
+          const { data, error } = await supabase.auth.getUser();
+          if (error && !error.message.includes("Auth session missing")) {
+              console.warn("User check warning:", error.message);
           }
-        });
-
-        mergedData.ratings = Array.from(mergedRatingsMap.values());
-
-        // B. Merge Judges & Teams
-        if (role === 'organizer') {
-           // ORGANIZER LOGIC (Garbage Collection + New Addition Acceptance):
-           
-           // 1. Start with Local List (The authority on what the Organizer wants)
-           const finalTeams = [...localData.teams];
-           const finalJudges = new Set(localData.judges);
-
-           // 2. Look at Remote Data. 
-           // If Remote has a team/judge that is NOT in Local, AND NOT in Banned list, 
-           // it means it's a NEW entry (e.g. a judge who just logged in). We add them.
-           if (remoteData.judges) {
-             remoteData.judges.forEach(j => {
-               if (!bannedJudges.has(j)) {
-                 finalJudges.add(j);
-               }
-             });
-           }
-
-           // (Teams are usually only added by Organizer, but if we supported multi-admin...)
-           if (remoteData.teams) {
-             const localTeamIds = new Set(finalTeams.map(t => t.id));
-             remoteData.teams.forEach(t => {
-               if (!localTeamIds.has(t.id) && !bannedTeams.has(t.id)) {
-                 finalTeams.push(t);
-               }
-             });
-           }
-
-           mergedData.judges = Array.from(finalJudges);
-           mergedData.teams = finalTeams;
-
-        } else {
-           // JUDGE LOGIC (Simple Union):
-           const allJudges = new Set([...(remoteData.judges || []), ...(localData.judges || [])]);
-           mergedData.judges = Array.from(allJudges);
-           mergedData.teams = remoteData.teams && remoteData.teams.length > 0 ? remoteData.teams : localData.teams;
-        }
+          user = data.user;
       }
+      
+      if (!user) return null;
+      
+      return {
+          id: user.id,
+          email: user.email!,
+          full_name: user.user_metadata.full_name || user.email?.split('@')[0] || 'User',
+          avatar_url: user.user_metadata.avatar_url
+      };
+  },
 
-      mergedData.updatedAt = Date.now();
+  // --- GLOBAL SETTINGS ---
+  async getGlobalSettings(): Promise<GlobalSettings | null> {
+    const { data } = await supabase.from('events').select('*').eq('id', 'sys_settings').single();
+    return data?.rubric ? (data.rubric as any) : null; 
+  },
 
-      // 3. Push Merged Data
-      const response = await fetch(url, {
-        method: 'POST', 
-        headers: headers,
-        body: JSON.stringify(mergedData),
+  async saveGlobalSettings(settings: GlobalSettings): Promise<boolean> {
+    const { error } = await supabase.from('events').upsert({ 
+        id: 'sys_settings', 
+        rubric: settings as any 
+    });
+    return !error;
+  },
+
+  // --- USER SPECIFIC EVENTS ---
+  async getEventsForOrganizer(userId: string) {
+      const { data } = await supabase.from('events').select('*').eq('organizer_id', userId);
+      return data || [];
+  },
+
+  async getEventsForJudge(userId: string) {
+      const { data: judges } = await supabase.from('judges').select('event_id').eq('user_id', userId);
+      if (!judges || judges.length === 0) return [];
+      
+      const eventIds = judges.map(j => j.event_id);
+      const { data: events } = await supabase.from('events').select('*').in('id', eventIds);
+      return events || [];
+  },
+
+  async getEventsForContestant(userId: string) {
+      const { data: contestants } = await supabase.from('contestants').select('event_id').eq('user_id', userId);
+      if (!contestants || contestants.length === 0) return [];
+
+      const eventIds = contestants.map(c => c.event_id);
+      const { data: events } = await supabase.from('events').select('*').in('id', eventIds);
+      return events || [];
+  },
+
+  // --- EVENT ACTIONS ---
+
+  async joinEventAsJudge(eventId: string, user: UserProfile, secret: string): Promise<{success: boolean, message: string}> {
+     const meta = await this.getEventMetadata(eventId);
+     if (!meta) return { success: false, message: 'Event not found' };
+     if (meta.judgePass !== secret) return { success: false, message: 'Invalid Judge Password' };
+
+     const { error } = await supabase.from('judges').upsert({
+         event_id: eventId,
+         user_id: user.id,
+         name: user.full_name,
+         status: 'joined',
+         updated_at: new Date().toISOString()
+     }, { onConflict: 'event_id, user_id' });
+
+     if (error) return { success: false, message: error.message };
+     return { success: true, message: 'Joined successfully' };
+  },
+
+  async leaveEventAsJudge(eventId: string, userId: string) {
+      await supabase.from('judges').delete().eq('event_id', eventId).eq('user_id', userId);
+      await supabase.from('ratings').delete().eq('event_id', eventId).eq('judge_id', userId); 
+  },
+
+  async joinEventAsContestant(eventId: string, user: UserProfile, entryDetails: {title: string, description: string, thumbnail: string}) {
+      const meta = await this.getEventMetadata(eventId);
+      if (!meta) return { success: false, message: 'Event not found' };
+      if (meta.registration !== 'open') return { success: false, message: 'Registration is closed for this event.' };
+
+      const { error } = await supabase.from('contestants').upsert({
+          id: user.id, 
+          event_id: eventId,
+          user_id: user.id,
+          name: user.full_name,
+          title: entryDetails.title,
+          description: entryDetails.description,
+          thumbnail: entryDetails.thumbnail
       });
+      
+      return { success: !error, message: error ? error.message : 'Joined' };
+  },
 
-      if (response.status === 413) {
-        alert("CRITICAL WARNING: Data size too large for Cloud Storage! \n\nThe sync failed because the teams have too many large images. \n\nPlease ask the organizer to delete some teams or re-upload images with lower quality.");
-        return false;
+  async withdrawAsContestant(eventId: string, userId: string) {
+      return supabase.from('contestants').delete().eq('event_id', eventId).eq('user_id', userId);
+  },
+
+  // --- EVENT MANAGEMENT ---
+
+  async checkEventExists(id: string): Promise<boolean> {
+      const { count } = await supabase.from('events').select('*', { count: 'exact', head: true }).eq('id', id);
+      return (count || 0) > 0;
+  },
+
+  async createEvent(config: CompetitionConfig, userId?: string): Promise<boolean> {
+      const { error } = await supabase.from('events').insert({
+          id: config.competitionId,
+          title: config.title,
+          type_description: config.typeDescription,
+          organizer_pass: config.organizerPass,
+          judge_pass: config.judgePass,
+          rubric: { 
+              criteria: config.rubric, 
+              visibility: config.visibility, 
+              viewPass: config.viewPass, 
+              registration: config.registration 
+          }, 
+          tie_breakers: config.tieBreakers,
+          organizer_id: userId || null
+      });
+      return !error;
+  },
+
+  async updateEventConfig(id: string, config: Partial<CompetitionConfig>): Promise<boolean> {
+      const payload: any = { updated_at: new Date().toISOString() };
+      if (config.title) payload.title = config.title;
+      if (config.rubric) {
+           payload.rubric = {
+               criteria: config.rubric,
+               visibility: config.visibility || 'public',
+               viewPass: config.viewPass,
+               registration: config.registration || 'closed'
+           };
       }
+      if (config.tieBreakers) payload.tie_breakers = config.tieBreakers;
+      
+      const { error } = await supabase.from('events').update(payload).eq('id', id);
+      return !error;
+  },
 
-      if (response.status === 403) {
-        isBackendUnavailable = true;
-        return false;
+  // --- FETCHING FULL STATE ---
+
+  async getEventMetadata(id: string): Promise<CompetitionConfig | null> {
+      const { data, error } = await supabase.from('events').select('*').eq('id', id).single();
+      if (error || !data) return null;
+      
+      const rawRubric = data.rubric as any;
+      const criteria = Array.isArray(rawRubric) ? rawRubric : (rawRubric?.criteria || []);
+      const visibility = rawRubric?.visibility || 'public';
+      const viewPass = rawRubric?.viewPass || '';
+      const registration = rawRubric?.registration || 'closed';
+
+      return {
+          competitionId: data.id,
+          title: data.title,
+          typeDescription: data.type_description,
+          organizerPass: data.organizer_pass,
+          judgePass: data.judge_pass,
+          rubric: criteria,
+          tieBreakers: data.tie_breakers,
+          isSetupComplete: true,
+          organizerId: data.organizer_id,
+          visibility,
+          viewPass,
+          registration
+      };
+  },
+
+  async getFullState(id: string) {
+      const [teamsRes, ratingsRes, judgesRes] = await Promise.all([
+          supabase.from('contestants').select('*').eq('event_id', id),
+          supabase.from('ratings').select('*').eq('event_id', id),
+          supabase.from('judges').select('*').eq('event_id', id)
+      ]);
+
+      return {
+          teams: (teamsRes.data || []).map((t: any) => ({
+              id: t.id,
+              userId: t.user_id,
+              name: t.name,
+              title: t.title,
+              description: t.description,
+              thumbnail: t.thumbnail
+          })) as Contestant[],
+          ratings: (ratingsRes.data || []).map((r: any) => ({
+              teamId: r.team_id,
+              judgeId: r.judge_id,
+              scores: r.scores,
+              feedback: r.feedback,
+              isDisqualified: r.is_disqualified,
+              lastUpdated: new Date(r.updated_at).getTime()
+          })) as Rating[],
+          judges: (judgesRes.data || []).map((j: any) => ({
+              id: j.user_id || j.name, 
+              name: j.name,
+              userId: j.user_id,
+              status: j.status
+          })) as Judge[]
+      };
+  },
+
+  // --- REALTIME MUTATIONS ---
+
+  async addContestant(eventId: string, c: Contestant) {
+      return supabase.from('contestants').upsert({
+          id: c.id,
+          event_id: eventId,
+          user_id: c.userId,
+          name: c.name,
+          title: c.title,
+          description: c.description,
+          thumbnail: c.thumbnail
+      });
+  },
+
+  async removeContestant(eventId: string, id: string) {
+      return supabase.from('contestants').delete().eq('id', id).eq('event_id', eventId);
+  },
+
+  async upsertRating(eventId: string, r: Rating) {
+      return supabase.from('ratings').upsert({
+          event_id: eventId,
+          team_id: r.teamId,
+          judge_id: r.judgeId,
+          scores: r.scores,
+          feedback: r.feedback,
+          is_disqualified: r.isDisqualified,
+          updated_at: new Date().toISOString()
+      }, { onConflict: 'event_id, team_id, judge_id' });
+  },
+
+  async removeJudge(eventId: string, judgeId: string) {
+      const { error } = await supabase.from('judges').delete().eq('event_id', eventId).or(`user_id.eq.${judgeId},name.eq.${judgeId}`);
+      if (!error) {
+          await supabase.from('ratings').delete().eq('event_id', eventId).eq('judge_id', judgeId);
       }
+  },
 
-      if (!response.ok) return false;
+  // --- REALTIME SUBSCRIPTION ---
 
-      return true;
-    } catch (error) {
-      return false;
-    }
+  subscribeToEvent(eventId: string, callbacks: {
+      onTeamsChange: (payload: any) => void,
+      onRatingsChange: (payload: any) => void,
+      onJudgesChange: (payload: any) => void,
+      onConfigChange: (payload: any) => void
+  }): RealtimeChannel {
+      return supabase
+        .channel(`event-${eventId}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'contestants', filter: `event_id=eq.${eventId}` }, callbacks.onTeamsChange)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'ratings', filter: `event_id=eq.${eventId}` }, callbacks.onRatingsChange)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'judges', filter: `event_id=eq.${eventId}` }, callbacks.onJudgesChange)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'events', filter: `id=eq.${eventId}` }, callbacks.onConfigChange)
+        .subscribe();
   }
 };

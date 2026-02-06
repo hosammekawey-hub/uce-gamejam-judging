@@ -1,22 +1,45 @@
 
-import React, { useState, useRef } from 'react';
-import { Team, UserRole } from '../types';
+import React, { useState, useRef, useEffect } from 'react';
+import { Contestant, UserRole, CompetitionConfig, Rating } from '../types';
 
-interface TeamManagementProps {
-  teams: Team[];
+interface EntryManagementProps {
+  teams: Contestant[];
   currentRole: UserRole;
-  onAddTeam: (team: Team) => void;
+  onAddTeam: (team: Contestant) => void;
   onRemoveTeam: (id: string) => void;
+  fullState?: {
+      teams: Contestant[];
+      config: CompetitionConfig;
+      ratings: Rating[];
+      judges: string[];
+  };
+  onImportData?: (data: any) => void;
 }
 
-const TeamManagement: React.FC<TeamManagementProps> = ({ teams, currentRole, onAddTeam, onRemoveTeam }) => {
-  const isManagementDisabled = currentRole !== 'organizer';
+const EntryManagement: React.FC<EntryManagementProps> = ({ teams, currentRole, onAddTeam, onRemoveTeam, fullState, onImportData }) => {
+  const isOrganizer = currentRole === 'organizer';
+  const isContestant = currentRole === 'contestant';
   
+  // If contestant, we might be editing an existing entry
+  const existingEntry = isContestant && teams.length > 0 ? teams[0] : null;
+
   const [newTeam, setNewTeam] = useState({ name: '', title: '', desc: '' });
   const [thumbnailBase64, setThumbnailBase64] = useState<string>('');
   const [isProcessingImg, setIsProcessingImg] = useState(false);
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const restoreInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+      if (existingEntry) {
+          setNewTeam({
+              name: existingEntry.name,
+              title: existingEntry.title,
+              desc: existingEntry.description
+          });
+          setThumbnailBase64(existingEntry.thumbnail);
+      }
+  }, [existingEntry]);
 
   // Helper to compress image
   const processImage = (file: File): Promise<string> => {
@@ -60,23 +83,27 @@ const TeamManagement: React.FC<TeamManagementProps> = ({ teams, currentRole, onA
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (isManagementDisabled) return;
     if (newTeam.name && newTeam.title) {
       onAddTeam({
-        id: 't' + Date.now(),
+        id: existingEntry ? existingEntry.id : 'c' + Date.now(),
+        userId: existingEntry ? existingEntry.userId : undefined,
         name: newTeam.name,
-        gameTitle: newTeam.title,
+        title: newTeam.title,
         description: newTeam.desc || 'No description provided.',
-        thumbnail: thumbnailBase64 || `https://picsum.photos/seed/${newTeam.title}/800/450`
+        thumbnail: thumbnailBase64
       });
-      setNewTeam({ name: '', title: '', desc: '' });
-      setThumbnailBase64('');
-      if (fileInputRef.current) fileInputRef.current.value = '';
+      if (!isContestant) {
+          setNewTeam({ name: '', title: '', desc: '' });
+          setThumbnailBase64('');
+          if (fileInputRef.current) fileInputRef.current.value = '';
+      } else {
+          alert("Entry Updated Successfully");
+      }
     }
   };
 
   const handleAttemptDelete = (id: string) => {
-    if (isManagementDisabled) return;
+    if (!isOrganizer) return;
     if (confirmingDeleteId === id) {
       onRemoveTeam(id);
       setConfirmingDeleteId(null);
@@ -87,69 +114,102 @@ const TeamManagement: React.FC<TeamManagementProps> = ({ teams, currentRole, onA
   };
 
   const handleClearAll = () => {
-    if (window.confirm('Are you sure you want to delete ALL teams and ratings? This cannot be undone.')) {
+    if (window.confirm('Are you sure you want to delete ALL entries and ratings? This cannot be undone.')) {
       teams.forEach(t => onRemoveTeam(t.id));
     }
   }
+
+  const handleExport = () => {
+    if (!fullState) return;
+    const dataStr = JSON.stringify(fullState, null, 2);
+    const blob = new Blob([dataStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `jam-judge-archive-${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !onImportData) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const json = JSON.parse(event.target?.result as string);
+        if (window.confirm("Restoring this file will OVERWRITE current event data. Continue?")) {
+            onImportData(json);
+        }
+      } catch (err) {
+        alert("Invalid backup file.");
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
 
   return (
     <div className="max-w-6xl mx-auto space-y-16 animate-fadeIn">
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-8">
         <div>
-          <h2 className="text-6xl font-black text-slate-900 tracking-tight leading-none uppercase">Team <span className="text-indigo-600">Roster</span></h2>
+          <h2 className="text-6xl font-black text-slate-900 tracking-tight leading-none uppercase">
+              {isContestant ? 'My Entry' : <>Entry <span className="text-indigo-600">Roster</span></>}
+          </h2>
           <p className="text-slate-500 font-bold mt-4 text-lg">
-            {isManagementDisabled ? 'Official competition team list for 2026.' : 'Full management control: Register and manage jam participants.'}
+            {isContestant ? 'Update your submission details.' : 'Manage competition participants and entries.'}
           </p>
         </div>
-        <div className="flex gap-4">
-          {!isManagementDisabled && teams.length > 0 && (
-             <button 
-               onClick={handleClearAll}
-               className="bg-rose-50 border border-rose-200 text-rose-600 px-6 py-3 rounded-2xl font-black text-xs tracking-widest uppercase shadow-lg hover:bg-rose-600 hover:text-white transition-all"
-             >
-               Reset Event Data
-             </button>
-          )}
-          <div className="inline-flex items-center gap-3 bg-white border border-slate-200 px-6 py-3 rounded-2xl font-black text-xs tracking-widest uppercase shadow-xl shadow-slate-200/50">
-            <span className="w-2 h-2 bg-indigo-600 rounded-full" />
-            {teams.length} Registered Teams
-          </div>
-        </div>
+        {isOrganizer && (
+            <div className="flex gap-4">
+              <button onClick={handleExport} className="bg-slate-900 text-white px-6 py-3 rounded-2xl font-black text-xs tracking-widest uppercase shadow-lg hover:bg-indigo-600 transition-all flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                Archive
+              </button>
+              <button onClick={() => restoreInputRef.current?.click()} className="bg-white border border-slate-200 text-slate-900 px-6 py-3 rounded-2xl font-black text-xs tracking-widest uppercase shadow-lg hover:bg-slate-50 transition-all flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+                Load
+              </button>
+              <input type="file" ref={restoreInputRef} onChange={handleImport} accept=".json" className="hidden" />
+              <button onClick={handleClearAll} className="bg-rose-50 border border-rose-200 text-rose-600 px-4 py-3 rounded-2xl font-black text-xs tracking-widest uppercase shadow-lg hover:bg-rose-600 hover:text-white transition-all">Reset</button>
+            </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
-        {/* Registration Form - Only for Organizers */}
-        {!isManagementDisabled && (
+        {/* Registration Form */}
+        {(isOrganizer || isContestant) && (
           <div className="lg:col-span-5">
             <div className="bg-white border border-slate-200 p-8 rounded-[2.5rem] shadow-2xl shadow-slate-200/50 sticky top-32">
               <h3 className="text-xl font-black text-slate-900 mb-8 flex items-center gap-4">
-                <div className="w-10 h-10 bg-slate-900 text-white rounded-xl flex items-center justify-center">＋</div>
-                Register New Entry
+                <div className="w-10 h-10 bg-slate-900 text-white rounded-xl flex items-center justify-center">{isContestant ? '✎' : '＋'}</div>
+                {isContestant ? 'Edit Submission' : 'Register New Entry'}
               </h3>
               <form onSubmit={handleSubmit} className="space-y-6">
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Team Name</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Participant / Team Name</label>
                   <input 
                     value={newTeam.name}
                     onChange={e => setNewTeam({...newTeam, name: e.target.value})}
                     className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-600 transition-all text-sm font-bold text-slate-900 placeholder-slate-300"
-                    placeholder="e.g. Gravity Goblins"
+                    placeholder="e.g. John Doe"
                     required
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Game Title</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Title / Project Name</label>
                   <input 
                     value={newTeam.title}
                     onChange={e => setNewTeam({...newTeam, title: e.target.value})}
                     className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-600 transition-all text-sm font-bold text-slate-900 placeholder-slate-300"
-                    placeholder="e.g. Orbital Strike"
+                    placeholder="e.g. Project X"
                     required
                   />
                 </div>
-
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Team Banner (Auto-Compressed)</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Thumbnail</label>
                   <div 
                     onClick={() => !isProcessingImg && fileInputRef.current?.click()}
                     className={`relative h-40 w-full rounded-[2rem] border-2 border-dashed transition-all cursor-pointer overflow-hidden flex flex-col items-center justify-center gap-2 ${
@@ -159,32 +219,13 @@ const TeamManagement: React.FC<TeamManagementProps> = ({ teams, currentRole, onA
                     {isProcessingImg ? (
                       <span className="text-[10px] font-black uppercase tracking-widest animate-pulse">Compressing...</span>
                     ) : thumbnailBase64 ? (
-                      <>
-                        <img src={thumbnailBase64} className="absolute inset-0 w-full h-full object-cover" alt="Preview" />
-                        <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center">
-                          <span className="text-white font-black text-[10px] uppercase tracking-widest bg-slate-900/60 px-4 py-2 rounded-xl">Change Image</span>
-                        </div>
-                      </>
+                      <img src={thumbnailBase64} className="absolute inset-0 w-full h-full object-cover" alt="Preview" />
                     ) : (
-                      <>
-                        <div className="w-12 h-12 rounded-2xl bg-white border border-slate-200 flex items-center justify-center text-slate-400 group-hover:text-indigo-600">
-                          <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                          </svg>
-                        </div>
-                        <span className="text-xs font-bold text-slate-400">Upload banner</span>
-                      </>
+                      <span className="text-xs font-bold text-slate-400">Upload banner</span>
                     )}
-                    <input 
-                      ref={fileInputRef}
-                      type="file"
-                      accept="image/*"
-                      onChange={handleFileChange}
-                      className="hidden"
-                    />
+                    <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileChange} className="hidden" />
                   </div>
                 </div>
-
                 <div className="space-y-2">
                   <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Description</label>
                   <textarea 
@@ -194,13 +235,12 @@ const TeamManagement: React.FC<TeamManagementProps> = ({ teams, currentRole, onA
                     placeholder="Brief description..."
                   />
                 </div>
-
                 <button 
                   type="submit"
                   disabled={isProcessingImg}
                   className="w-full py-5 bg-slate-900 text-white font-black uppercase tracking-[0.3em] rounded-2xl hover:bg-indigo-600 transition-all shadow-xl active:scale-95 text-[10px] disabled:bg-slate-300"
                 >
-                  Create Submission
+                  {isContestant ? 'Update Entry' : 'Create Entry'}
                 </button>
               </form>
             </div>
@@ -208,26 +248,30 @@ const TeamManagement: React.FC<TeamManagementProps> = ({ teams, currentRole, onA
         )}
 
         {/* List of Teams */}
-        <div className={isManagementDisabled ? 'lg:col-span-12 space-y-6' : 'lg:col-span-7 space-y-6'}>
+        <div className="lg:col-span-7 space-y-6">
           {teams.length === 0 ? (
             <div className="bg-white border-2 border-dashed border-slate-200 rounded-[3rem] p-24 text-center">
-              <p className="text-slate-400 font-black uppercase tracking-[0.3em] text-sm">No submissions in system</p>
+              <p className="text-slate-400 font-black uppercase tracking-[0.3em] text-sm">No entries found</p>
             </div>
           ) : (
-            <div className={`grid gap-6 ${isManagementDisabled ? 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3' : 'grid-cols-1'}`}>
+            <div className={`grid gap-6 ${isOrganizer ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'}`}>
               {teams.map(team => (
                 <div key={team.id} className="bg-white border border-slate-200 p-6 pr-8 rounded-[2.5rem] shadow-xl shadow-slate-200/50 flex items-center justify-between group hover:border-indigo-600 transition-all">
                   <div className="flex items-center gap-6">
                     <div className="h-20 w-32 rounded-[1.2rem] overflow-hidden shadow-inner bg-slate-50 flex-shrink-0 border border-slate-100">
-                      <img src={team.thumbnail} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-1000" alt="" />
+                      {team.thumbnail ? (
+                        <img src={team.thumbnail} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-1000" alt="" />
+                      ) : (
+                         <div className="w-full h-full bg-slate-200 flex items-center justify-center text-xl">🏆</div>
+                      )}
                     </div>
                     <div>
-                      <h4 className="font-black text-slate-900 text-xl tracking-tight group-hover:text-indigo-600 transition-colors leading-tight">{team.gameTitle}</h4>
+                      <h4 className="font-black text-slate-900 text-xl tracking-tight group-hover:text-indigo-600 transition-colors leading-tight">{team.title}</h4>
                       <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">By {team.name}</p>
                     </div>
                   </div>
                   
-                  {!isManagementDisabled && (
+                  {isOrganizer && (
                     <div className="flex items-center">
                       <button 
                         type="button"
@@ -258,4 +302,4 @@ const TeamManagement: React.FC<TeamManagementProps> = ({ teams, currentRole, onA
   );
 };
 
-export default TeamManagement;
+export default EntryManagement;

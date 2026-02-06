@@ -1,370 +1,293 @@
 
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { TEAMS as INITIAL_TEAMS, RUBRIC } from './constants';
-import { Team, Rating, Judge, UserRole, ScoreSet } from './types';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { DEFAULT_CONFIG, COMPETITION_TEMPLATES } from './constants';
+import { Contestant, Rating, Judge, UserRole, ScoreSet, CompetitionConfig, Criterion, GlobalSettings, UserProfile } from './types';
 import Dashboard from './components/Dashboard';
 import RatingForm from './components/RatingForm';
 import Leaderboard from './components/Leaderboard';
-import Login from './components/Login';
-import TeamManagement from './components/TeamManagement';
+import UserPortal from './components/Login';
+import EntryManagement from './components/TeamManagement';
 import JudgeManagement from './components/JudgeManagement';
+import CompetitionSetup from './components/CompetitionSetup';
+import AdminPanel from './components/AdminPanel';
 import { SyncService } from './services/syncService';
+import { RealtimeChannel } from '@supabase/supabase-js';
 
 const App: React.FC = () => {
-  const [currentJudgeName, setCurrentJudgeName] = useState<string | null>(() => localStorage.getItem('jamJudge_name'));
-  const [currentRole, setCurrentRole] = useState<UserRole>(() => (localStorage.getItem('jamJudge_role') as UserRole) || 'judge');
-  const [accessPhrase, setAccessPhrase] = useState<string | null>(() => localStorage.getItem('jamJudge_phrase'));
-  
+  // State for Authentication and Context
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  const [currentRole, setCurrentRole] = useState<UserRole>('viewer');
+  const [competitionId, setCompetitionId] = useState<string | null>(null);
+  const [adminMode, setAdminMode] = useState(false);
+
+  // App View State
   const [view, setView] = useState<'dashboard' | 'rating' | 'leaderboard' | 'teams' | 'judges'>('dashboard');
-  const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
-  
-  const [isSyncing, setIsSyncing] = useState(false);
+  const [selectedContestant, setSelectedContestant] = useState<Contestant | null>(null);
   const [isOfflineMode, setIsOfflineMode] = useState(false);
+  const [globalSettings, setGlobalSettings] = useState<GlobalSettings | null>(null);
 
-  // Initialize teams from local storage
-  const [teams, setTeams] = useState<Team[]>(() => {
-    try {
-      const saved = localStorage.getItem('jamJudge_teams');
-      const parsed = saved ? JSON.parse(saved) : null;
-      return (parsed && Array.isArray(parsed) && parsed.length > 0) ? parsed : INITIAL_TEAMS;
-    } catch (e) {
-      return INITIAL_TEAMS;
-    }
-  });
+  const [config, setConfig] = useState<CompetitionConfig>(DEFAULT_CONFIG);
+  const [contestants, setContestants] = useState<Contestant[]>([]);
+  const [ratings, setRatings] = useState<Rating[]>([]);
+  const [knownJudges, setKnownJudges] = useState<Judge[]>([]);
 
-  const [ratings, setRatings] = useState<Rating[]>(() => {
-    try {
-      const saved = localStorage.getItem('jamJudge_ratings');
-      return saved ? JSON.parse(saved) : [];
-    } catch (e) {
-      return [];
-    }
-  });
+  // Realtime Reference
+  const subscriptionRef = useRef<RealtimeChannel | null>(null);
 
-  const [knownJudges, setKnownJudges] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('jamJudge_known_names');
-      return saved ? JSON.parse(saved) : [];
-    } catch (e) {
-      return [];
-    }
-  });
-
-  // --- REFS FOR POLLING & TOMBSTONES ---
-  const teamsRef = useRef(teams);
-  const ratingsRef = useRef(ratings);
-  const judgesRef = useRef(knownJudges);
-  
-  // Tombstones: IDs of items we have deleted.
-  // We initialize from localStorage so deletions survive a page refresh.
-  // Using useState for lazy initialization to compute initial value once.
-  const [initialTombstones] = useState<{ teams: Set<string>, judges: Set<string> }>(() => {
-    try {
-      const saved = localStorage.getItem('jamJudge_tombstones');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        return {
-          teams: new Set<string>(parsed.teams || []),
-          judges: new Set<string>(parsed.judges || [])
-        };
-      }
-    } catch (e) {}
-    return { teams: new Set<string>(), judges: new Set<string>() };
-  });
-
-  const tombstonesRef = useRef(initialTombstones);
-
-  useEffect(() => { teamsRef.current = teams; }, [teams]);
-  useEffect(() => { ratingsRef.current = ratings; }, [ratings]);
-  useEffect(() => { judgesRef.current = knownJudges; }, [knownJudges]);
-
-  // Helper to persist tombstones
-  const updateTombstones = (type: 'teams' | 'judges', id: string) => {
-    tombstonesRef.current[type].add(id);
-    localStorage.setItem('jamJudge_tombstones', JSON.stringify({
-      teams: Array.from(tombstonesRef.current.teams),
-      judges: Array.from(tombstonesRef.current.judges)
-    }));
-  };
-
-  const clearTombstones = () => {
-    tombstonesRef.current = { teams: new Set(), judges: new Set() };
-    localStorage.removeItem('jamJudge_tombstones');
-  }
-
-  // --- CLOUD SYNC LOGIC ---
-
-  const syncToCloud = useCallback(async (currentTeams: Team[], currentRatings: Rating[], currentJudges: string[]) => {
-    if (!accessPhrase) return;
-    setIsSyncing(true);
-    try {
-      // Pass tombstones to sync service so it knows what to exclude from remote merges
-      const banned = {
-        teams: Array.from(tombstonesRef.current.teams),
-        judges: Array.from(tombstonesRef.current.judges)
-      };
-
-      const success = await SyncService.pushData(
-        accessPhrase, 
-        {
-          teams: currentTeams,
-          ratings: currentRatings,
-          judges: currentJudges,
-          updatedAt: Date.now()
-        }, 
-        currentRole,
-        banned
-      );
-      
-      setIsOfflineMode(!success);
-    } catch (e) {
-      setIsOfflineMode(true);
-    } finally {
-      setIsSyncing(false);
-    }
-  }, [accessPhrase, currentRole]);
-
+  // --- 1. INITIAL LOAD & SUBSCRIPTIONS ---
   useEffect(() => {
-    let isMounted = true;
+    // Check initial user
+    SyncService.getCurrentUser().then(u => {
+        if (u) setCurrentUser(u);
+    });
 
-    const loadCloudData = async () => {
-      if (!accessPhrase) return;
-      
-      setIsSyncing(true);
-      const cloudData = await SyncService.pullData(accessPhrase);
-      
-      if (isMounted) {
-        if (cloudData) {
-          setIsOfflineMode(false);
-          
-          const currentTeamsState = teamsRef.current;
-          const currentRatingsState = ratingsRef.current;
-          const currentJudgesState = judgesRef.current;
-          
-          // --- MERGE STRATEGIES ---
-          
-          // 1. Teams
-          if (cloudData.teams && Array.isArray(cloudData.teams)) {
-            // Always filter out tombstones first
-            const validCloudTeams = cloudData.teams.filter(t => !tombstonesRef.current.teams.has(t.id));
-
-            if (currentRole === 'organizer') {
-              // Organizer: Only accept new teams from cloud if we have NONE (initial load).
-              // Otherwise, we manage the roster locally.
-              if (currentTeamsState.length === 0 && validCloudTeams.length > 0) {
-                setTeams(validCloudTeams);
-              }
-            } else {
-              // Judges: Accept the valid cloud roster
-              if (validCloudTeams.length > 0) {
-                setTeams(validCloudTeams);
-              }
+    // Subscribe to Auth Changes globally
+    const { data: { subscription } } = SyncService.onAuthStateChange((event, session) => {
+        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+            if (session?.user) {
+                setCurrentUser({
+                    id: session.user.id,
+                    email: session.user.email!,
+                    full_name: session.user.user_metadata.full_name || session.user.email?.split('@')[0] || 'User',
+                    avatar_url: session.user.user_metadata.avatar_url
+                });
             }
-          }
-
-          // 2. Judges List
-          // Cloud is the source of truth for NEW judges.
-          // But we must reject judges we have locally banned (tombstoned).
-          if (cloudData.judges && Array.isArray(cloudData.judges)) {
-             const validCloudJudges = cloudData.judges.filter(jId => !tombstonesRef.current.judges.has(jId));
-             
-             // Merge with local knowledge
-             setKnownJudges(prev => Array.from(new Set([...prev, ...validCloudJudges])));
-          }
-
-          // 3. Ratings
-          if (cloudData.ratings && Array.isArray(cloudData.ratings)) {
-             // Filter ratings from banned judges or teams
-             const validCloudRatings = cloudData.ratings.filter(r => 
-               !tombstonesRef.current.judges.has(r.judgeId) && 
-               !tombstonesRef.current.teams.has(r.teamId)
-             );
-
-             const myLocalRatings = currentRatingsState.filter(r => r.judgeId === currentJudgeName);
-             const othersCloudRatings = validCloudRatings.filter(r => r.judgeId !== currentJudgeName);
-             const myCloudRatings = validCloudRatings.filter(r => r.judgeId === currentJudgeName);
-             
-             const mergedMyRatings = [...myLocalRatings];
-             
-             myCloudRatings.forEach(cloudR => {
-                const localIdx = mergedMyRatings.findIndex(l => l.teamId === cloudR.teamId);
-                if (localIdx === -1) {
-                   mergedMyRatings.push(cloudR);
-                } else {
-                   if (cloudR.lastUpdated > mergedMyRatings[localIdx].lastUpdated) {
-                      mergedMyRatings[localIdx] = cloudR;
-                   }
-                }
-             });
-
-             setRatings([...othersCloudRatings, ...mergedMyRatings]);
-          }
-
-        } else {
-          // Cloud empty. Push local state if organizer.
-          if (teamsRef.current.length > 0 && currentRole === 'organizer') {
-            syncToCloud(teamsRef.current, ratingsRef.current, judgesRef.current);
-          }
+        } else if (event === 'SIGNED_OUT') {
+            setCurrentUser(null);
+            handleExitEvent();
         }
-        setIsSyncing(false);
-      }
-    };
+    });
 
-    loadCloudData();
-    const interval = setInterval(loadCloudData, 5000);
     return () => {
-      isMounted = false;
-      clearInterval(interval);
+        subscription.unsubscribe();
     };
-  }, [accessPhrase, currentJudgeName, currentRole, syncToCloud]);
+  }, []);
 
-  // Persistence
   useEffect(() => {
-    if (currentJudgeName) {
-      localStorage.setItem('jamJudge_name', currentJudgeName);
-      localStorage.setItem('jamJudge_role', currentRole);
-      localStorage.setItem('jamJudge_phrase', accessPhrase || '');
-    }
-    localStorage.setItem('jamJudge_ratings', JSON.stringify(ratings));
-    localStorage.setItem('jamJudge_teams', JSON.stringify(teams));
-    localStorage.setItem('jamJudge_known_names', JSON.stringify(knownJudges));
-  }, [currentJudgeName, currentRole, accessPhrase, ratings, teams, knownJudges]);
+    if (!competitionId) return;
+    
+    let isMounted = true;
+    const init = async () => {
+        setIsOfflineMode(true);
+        // Fetch Full State
+        const data = await SyncService.getFullState(competitionId);
+        
+        if (isMounted) {
+            if (data.teams) setContestants(data.teams);
+            if (data.ratings) setRatings(data.ratings);
+            if (data.judges) setKnownJudges(data.judges);
+            setIsOfflineMode(false);
+        }
 
-  const handleLogin = (name: string, role: UserRole, phrase: string) => {
-    setCurrentJudgeName(name);
+        // Setup Subscription
+        if (subscriptionRef.current) subscriptionRef.current.unsubscribe();
+        
+        subscriptionRef.current = SyncService.subscribeToEvent(competitionId, {
+            onTeamsChange: (payload) => {
+                if (payload.eventType === 'INSERT') {
+                    setContestants(prev => [...prev, payload.new as Contestant]);
+                } else if (payload.eventType === 'DELETE') {
+                    setContestants(prev => prev.filter(t => t.id !== payload.old.id));
+                } else if (payload.eventType === 'UPDATE') {
+                    setContestants(prev => prev.map(t => t.id === payload.new.id ? payload.new as Contestant : t));
+                }
+            },
+            onRatingsChange: (payload) => {
+                const newRating = {
+                    teamId: payload.new.team_id,
+                    judgeId: payload.new.judge_id,
+                    scores: payload.new.scores,
+                    feedback: payload.new.feedback,
+                    isDisqualified: payload.new.is_disqualified,
+                    lastUpdated: new Date(payload.new.updated_at).getTime()
+                } as Rating;
+
+                if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+                    setRatings(prev => {
+                        const others = prev.filter(r => !(r.teamId === newRating.teamId && r.judgeId === newRating.judgeId));
+                        return [...others, newRating];
+                    });
+                } else if (payload.eventType === 'DELETE') {
+                    setRatings(prev => prev.filter(r => !(r.teamId === payload.old.team_id && r.judgeId === payload.old.judge_id)));
+                }
+            },
+            onJudgesChange: (payload) => {
+                if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+                     const newJudge = { id: payload.new.user_id || payload.new.name, name: payload.new.name, userId: payload.new.user_id, status: payload.new.status } as Judge;
+                     setKnownJudges(prev => {
+                         const others = prev.filter(j => j.id !== newJudge.id);
+                         return [...others, newJudge];
+                     });
+                } else if (payload.eventType === 'DELETE') {
+                     setKnownJudges(prev => prev.filter(j => j.id !== (payload.old.user_id || payload.old.name)));
+                }
+            },
+            onConfigChange: (payload) => {
+                if (payload.eventType === 'UPDATE') {
+                    // Re-wrap rubric to catch visibility updates
+                    const rawRubric = payload.new.rubric || {};
+                    const criteria = Array.isArray(rawRubric) ? rawRubric : (rawRubric.criteria || []);
+                    
+                    setConfig(prev => ({
+                        ...prev,
+                        title: payload.new.title,
+                        rubric: criteria,
+                        tieBreakers: payload.new.tie_breakers,
+                        visibility: rawRubric.visibility || 'public',
+                        viewPass: rawRubric.viewPass || '',
+                        registration: rawRubric.registration || 'closed'
+                    }));
+                }
+            }
+        });
+    };
+
+    init();
+
+    return () => {
+        isMounted = false;
+        if (subscriptionRef.current) subscriptionRef.current.unsubscribe();
+    };
+  }, [competitionId]);
+
+  // --- ACTIONS ---
+
+  const handleEnterEvent = async (role: UserRole, compId: string, initialConfig?: CompetitionConfig, user?: UserProfile) => {
+    setCurrentUser(user || null);
     setCurrentRole(role);
-    setAccessPhrase(phrase);
-    
-    // Clear tombstones on new login to prevent carrying over bans between sessions/users
-    clearTombstones();
-    
-    if (role === 'judge') {
-      const updatedJudges = Array.from(new Set([...knownJudges, name]));
-      setKnownJudges(updatedJudges);
-      syncToCloud(teams, ratings, updatedJudges);
-    } else {
-      syncToCloud(teams, ratings, knownJudges);
-    }
-  };
-
-  const handleLogout = () => {
-    localStorage.clear(); // Clears all data including tombstones
-    setCurrentJudgeName(null);
-    setAccessPhrase(null);
-    setTeams(INITIAL_TEAMS);
-    setRatings([]);
-    setKnownJudges([]);
+    setCompetitionId(compId);
+    if (initialConfig) setConfig(initialConfig);
     setView('dashboard');
   };
 
-  const saveRating = (rating: Rating) => {
-    if (currentRole === 'organizer') return;
+  const handleExitEvent = () => {
+      setCompetitionId(null);
+      setContestants([]);
+      setRatings([]);
+      setKnownJudges([]);
+      // We do NOT clear currentUser here, so they go back to Portal
+  };
+
+  const handleUpdateConfig = async (newRubric: Criterion[], newTieBreakers: { title: string; question: string }[]) => {
+      setConfig(prev => ({ ...prev, rubric: newRubric, tieBreakers: newTieBreakers }));
+      await SyncService.updateEventConfig(competitionId!, { 
+          rubric: newRubric, 
+          tieBreakers: newTieBreakers,
+          visibility: config.visibility,
+          viewPass: config.viewPass,
+          registration: config.registration
+      });
+  };
+
+  const saveRating = async (rating: Rating) => {
+    if (currentRole !== 'judge') return;
     setRatings(prev => {
       const filtered = prev.filter(r => !(r.teamId === rating.teamId && r.judgeId === rating.judgeId));
-      const updated = [...filtered, rating];
-      syncToCloud(teams, updated, knownJudges);
-      return updated;
+      return [...filtered, rating];
     });
+    // Ensure we send ID-based judge ID if available
+    await SyncService.upsertRating(competitionId!, rating);
     setView('dashboard');
   };
 
-  const handleAddTeam = (team: Team) => {
+  const handleAddContestant = async (c: Contestant) => {
     if (currentRole !== 'organizer') return;
-    const updated = [...teams, team];
-    setTeams(updated);
-    syncToCloud(updated, ratings, knownJudges);
+    setContestants(prev => [...prev, c]);
+    await SyncService.addContestant(competitionId!, c);
   };
 
-  const handleRemoveTeam = (id: string) => {
-    if (currentRole !== 'organizer') return;
-    
-    updateTombstones('teams', id);
-
-    const updatedTeams = teams.filter(t => t.id !== id);
-    const updatedRatings = ratings.filter(r => r.teamId !== id);
-    setTeams(updatedTeams);
-    setRatings(updatedRatings);
-    syncToCloud(updatedTeams, updatedRatings, knownJudges);
+  const handleUpdateContestant = async (c: Contestant) => {
+      // Allow self-update for contestants
+      if (currentRole === 'organizer' || (currentRole === 'contestant' && currentUser && c.userId === currentUser.id)) {
+           setContestants(prev => prev.map(t => t.id === c.id ? c : t));
+           await SyncService.addContestant(competitionId!, c); // Upsert handles update
+      }
   };
 
-  const handleRemoveJudge = (judgeId: string) => {
+  const handleRemoveContestant = async (id: string) => {
     if (currentRole !== 'organizer') return;
-    
-    updateTombstones('judges', judgeId);
-    
-    const updatedJudges = knownJudges.filter(j => j !== judgeId);
-    const updatedRatings = ratings.filter(r => r.judgeId !== judgeId);
-    
-    setKnownJudges(updatedJudges);
-    setRatings(updatedRatings);
-    syncToCloud(teams, updatedRatings, updatedJudges);
+    setContestants(prev => prev.filter(t => t.id !== id));
+    await SyncService.removeContestant(competitionId!, id);
   };
 
-  const derivedOtherJudges: Judge[] = useMemo(() => {
-    return knownJudges
-      .filter(name => (view === 'judges' ? true : name !== currentJudgeName)) 
-      .map(name => {
-        const judgeRatingsCount = ratings.filter(r => r.judgeId === name).length;
-        let status: 'pending' | 'in-progress' | 'completed' = 'pending';
-        if (judgeRatingsCount === 0) status = 'pending';
-        else if (judgeRatingsCount >= teams.length && teams.length > 0) status = 'completed';
-        else status = 'in-progress';
-        return { id: name, name: name, status: status };
-      });
-  }, [knownJudges, ratings, teams.length, currentJudgeName, currentRole, view]);
+  const handleRemoveJudge = async (judgeId: string) => {
+    if (currentRole !== 'organizer') return;
+    setKnownJudges(prev => prev.filter(j => j.id !== judgeId));
+    await SyncService.removeJudge(competitionId!, judgeId);
+  };
+
+  // --- DERIVED STATE ---
+  
+  // Logic to identify current user in the context of the event
+  const currentJudgeId = useMemo(() => {
+      if (!currentUser) return null;
+      // If we have a user, their judgeID is likely their userId (UUID)
+      // Check known judges
+      const j = knownJudges.find(j => j.userId === currentUser.id);
+      return j ? j.id : currentUser.id; 
+  }, [currentUser, knownJudges]);
 
   const activeRating = useMemo(() => {
-    if (!selectedTeam) return undefined;
-
-    if (currentRole === 'judge') {
-      return ratings.find(r => r.teamId === selectedTeam.id && r.judgeId === currentJudgeName);
+    if (!selectedContestant) return undefined;
+    
+    if (currentRole === 'judge' && currentJudgeId) {
+      return ratings.find(r => r.teamId === selectedContestant.id && r.judgeId === currentJudgeId);
     } 
-
-    if (currentRole === 'organizer') {
-      const teamRatings = ratings.filter(r => r.teamId === selectedTeam.id);
+    
+    // Aggregation for Organizer, Contestant (Viewer mode), Viewer
+    if (currentRole === 'organizer' || currentRole === 'viewer' || currentRole === 'contestant') {
+      const teamRatings = ratings.filter(r => r.teamId === selectedContestant.id);
       if (teamRatings.length === 0) return undefined;
 
       const avgScores: ScoreSet = {};
-      RUBRIC.forEach(c => avgScores[c.id] = 0);
+      config.rubric.forEach(c => avgScores[c.id] = 0);
 
       teamRatings.forEach(r => {
-        RUBRIC.forEach(c => {
-          avgScores[c.id] += (r.scores[c.id] || 0);
-        });
+        config.rubric.forEach(c => avgScores[c.id] += (r.scores[c.id] || 0));
       });
+      config.rubric.forEach(c => avgScores[c.id] = avgScores[c.id] / teamRatings.length);
 
-      RUBRIC.forEach(c => {
-        avgScores[c.id] = Math.round(avgScores[c.id] / teamRatings.length);
-      });
-
-      const feedbackList = teamRatings
-        .filter(r => r.feedback && r.feedback.trim().length > 0)
-        .map(r => `--- Judge ${r.judgeId} ---\n${r.feedback}`);
+      // Only Organizer sees full feedback usually, but let's allow it for now or filter
+      const feedbackList = teamRatings.filter(r => r.feedback?.trim()).map(r => `--- ${r.judgeId} ---\n${r.feedback}`);
       
-      const combinedFeedback = feedbackList.length > 0 
-        ? feedbackList.join('\n\n') 
-        : "No qualitative feedback submitted yet.";
-
       return {
-        teamId: selectedTeam.id,
+        teamId: selectedContestant.id,
         judgeId: 'AGGREGATE',
         scores: avgScores,
-        feedback: combinedFeedback,
+        feedback: feedbackList.join('\n\n'),
         isDisqualified: teamRatings.some(r => r.isDisqualified),
         lastUpdated: Date.now()
       } as Rating;
     }
-  }, [selectedTeam, ratings, currentJudgeName, currentRole]);
+  }, [selectedContestant, ratings, currentJudgeId, currentRole, config]);
 
-  if (!currentJudgeName) {
-    return <Login onLogin={handleLogin} />;
+
+  // --- RENDER ---
+
+  if (adminMode) {
+      return <AdminPanel initialSettings={globalSettings || {judgePass:'', organizerPass:'', templates:COMPETITION_TEMPLATES}} onUpdateSettings={setGlobalSettings} onLogout={() => setAdminMode(false)} />;
   }
 
+  // If no competition selected, show Portal
+  if (!competitionId) {
+      return <UserPortal onEnterEvent={handleEnterEvent} onAdminLogin={() => setAdminMode(true)} />;
+  }
+
+  // Event Setup Mode for Organizers
+  if (currentRole === 'organizer' && !config.isSetupComplete) {
+    return <CompetitionSetup onComplete={(c) => { 
+        // Sync Logic here
+        SyncService.updateEventConfig(c.competitionId, {...c, isSetupComplete: true});
+        setConfig({...c, isSetupComplete: true});
+    }} onCancel={handleExitEvent} templates={COMPETITION_TEMPLATES} />;
+  }
+
+  // Define Navigation based on Role
   const navItems = [
-    { id: 'dashboard', label: 'Dashboard', roles: ['judge', 'organizer'] },
-    { id: 'teams', label: 'Team Roster', roles: ['organizer'] },
-    { id: 'judges', label: 'Judge Roster', roles: ['organizer'] },
-    { id: 'leaderboard', label: 'Standings', roles: ['judge', 'organizer'] }
+    { id: 'dashboard', label: 'Overview', roles: ['judge', 'organizer', 'contestant', 'viewer'] },
+    { id: 'teams', label: currentRole === 'contestant' ? 'My Entry' : 'Entries', roles: ['organizer', 'contestant'] },
+    { id: 'judges', label: 'Judges', roles: ['organizer'] },
+    { id: 'leaderboard', label: 'Standings', roles: ['judge', 'organizer', 'contestant', 'viewer'] }
   ].filter(item => item.roles.includes(currentRole));
 
   return (
@@ -372,45 +295,34 @@ const App: React.FC = () => {
       <nav className="bg-white/80 backdrop-blur-xl border-b border-slate-200 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-20 items-center">
-            <div className="flex items-center gap-3 group cursor-pointer" onClick={() => setView('dashboard')}>
-              <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-600/20 transform group-hover:scale-105 transition-transform">
-                <span className="text-xl">🏆</span>
-              </div>
-              <span className="text-xl font-black text-slate-900 tracking-tighter uppercase">UCE Global <span className="text-indigo-600">Game Jam</span></span>
+            <div className="flex items-center gap-3 cursor-pointer" onClick={() => setView('dashboard')}>
+              <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-600/20"><span className="text-xl">🏆</span></div>
+              <span className="text-xl font-black text-slate-900 tracking-tighter uppercase hidden sm:block">{config.title}</span>
             </div>
             
-            <div className="hidden md:flex items-center gap-2">
-              <div className={`flex items-center gap-3 mr-6 px-4 py-2 rounded-xl border ${isOfflineMode ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-slate-100'}`}>
-                <div className={`w-2 h-2 rounded-full ${isOfflineMode ? 'bg-amber-500' : isSyncing ? 'bg-indigo-500 animate-pulse' : 'bg-green-500'}`} />
-                <span className={`text-[9px] font-black uppercase tracking-widest ${isOfflineMode ? 'text-amber-600' : 'text-slate-400'}`}>
-                  {isOfflineMode ? 'Offline Mode' : isSyncing ? 'Syncing...' : 'Cloud Synced'}
+            <div className="flex items-center gap-2">
+              <div className={`hidden md:flex items-center gap-3 mr-6 px-4 py-2 rounded-xl border ${isOfflineMode ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-100'}`}>
+                <div className={`w-2 h-2 rounded-full ${isOfflineMode ? 'bg-amber-500' : 'bg-emerald-500 animate-pulse'}`} />
+                <span className={`text-[9px] font-black uppercase tracking-widest ${isOfflineMode ? 'text-amber-600' : 'text-emerald-600'}`}>
+                  {isOfflineMode ? 'Connecting...' : 'Live'}
                 </span>
               </div>
 
               {navItems.map(nav => (
-                <button 
-                  key={nav.id}
-                  onClick={() => setView(nav.id as any)}
-                  className={`px-5 py-2.5 text-[11px] font-black uppercase tracking-[0.2em] rounded-xl transition-all ${
-                    view === nav.id 
-                    ? 'text-white bg-indigo-600 shadow-lg shadow-indigo-600/20' 
-                    : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100'
-                  }`}
-                >
+                <button key={nav.id} onClick={() => setView(nav.id as any)} className={`px-4 py-2 text-[10px] font-black uppercase tracking-[0.2em] rounded-xl transition-all ${view === nav.id ? 'text-white bg-indigo-600 shadow-lg' : 'text-slate-500 hover:bg-slate-100'}`}>
                   {nav.label}
                 </button>
               ))}
-              <div className="h-6 w-px bg-slate-200 mx-4" />
-              <div className="flex flex-col items-end mr-4">
-                <span className={`text-[9px] uppercase font-black tracking-widest px-2 py-0.5 rounded-md ${currentRole === 'organizer' ? 'bg-amber-100 text-amber-700 border border-amber-200' : 'text-indigo-600 bg-indigo-50'}`}>
-                  {currentRole}
-                </span>
-                <span className="text-sm font-black text-slate-900">{currentJudgeName}</span>
+              
+              <div className="h-6 w-px bg-slate-200 mx-4 hidden md:block" />
+              
+              <div className="hidden md:flex flex-col items-end mr-4">
+                <span className="text-[9px] uppercase font-black tracking-widest px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-600">{currentRole}</span>
+                <span className="text-sm font-black text-slate-900">{currentUser?.full_name || 'Guest'}</span>
               </div>
-              <button onClick={handleLogout} className="w-10 h-10 flex items-center justify-center bg-rose-50 text-rose-600 hover:bg-rose-600 hover:text-white rounded-xl transition-all border border-rose-100">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M3 3a1 1 0 00-1 1v12a1 1 0 102 0V4a1 1 0 00-1-1zm10.293 9.293a1 1 0 001.414 1.414l3-3a1 1 0 000-1.414l-3-3a1 1 0 10-1.414 1.414L14.586 9H7a1 1 0 100 2h7.586l-1.293 1.293z" clipRule="evenodd" />
-                </svg>
+              
+              <button onClick={handleExitEvent} className="px-4 py-2 bg-slate-100 text-slate-600 hover:bg-rose-500 hover:text-white rounded-xl transition-all text-xs font-black uppercase tracking-widest ml-2">
+                Exit
               </button>
             </div>
           </div>
@@ -420,40 +332,44 @@ const App: React.FC = () => {
       <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-12 relative z-10">
         {view === 'dashboard' && (
           <Dashboard 
-            teams={teams} 
+            title={config.title}
+            rubric={config.rubric}
+            teams={contestants} 
             ratings={ratings} 
-            currentJudge={currentJudgeName!} 
+            currentJudge={currentJudgeId || 'guest'} 
             currentRole={currentRole}
-            otherJudges={derivedOtherJudges}
-            onSelectTeam={(team) => { setSelectedTeam(team); setView('rating'); }}
+            otherJudges={knownJudges}
+            onSelectTeam={(team) => { setSelectedContestant(team); setView('rating'); }}
+            tieBreakers={config.tieBreakers}
+            onUpdateConfig={handleUpdateConfig}
+            canEditRubric={currentRole === 'organizer'}
           />
         )}
-        {view === 'rating' && selectedTeam && (
+        {view === 'rating' && selectedContestant && (
           <RatingForm 
-            key={selectedTeam.id}
-            team={selectedTeam} 
+            key={selectedContestant.id}
+            team={selectedContestant} 
+            rubric={config.rubric}
             existingRating={activeRating}
-            judgeName={currentJudgeName!}
+            judgeName={currentJudgeId || 'guest'}
             currentRole={currentRole}
             onSave={saveRating}
             onCancel={() => setView('dashboard')}
           />
         )}
-        {view === 'leaderboard' && <Leaderboard teams={teams} ratings={ratings} otherJudges={derivedOtherJudges} />}
-        {view === 'teams' && currentRole === 'organizer' && (
-          <TeamManagement 
-            teams={teams}
+        {view === 'leaderboard' && (
+          <Leaderboard teams={contestants} ratings={ratings} rubric={config.rubric} />
+        )}
+        {view === 'teams' && (currentRole === 'organizer' || currentRole === 'contestant') && (
+          <EntryManagement 
+            teams={currentRole === 'contestant' && currentUser ? contestants.filter(c => c.userId === currentUser.id) : contestants}
             currentRole={currentRole}
-            onAddTeam={handleAddTeam}
-            onRemoveTeam={handleRemoveTeam}
+            onAddTeam={currentRole === 'contestant' ? handleUpdateContestant : handleAddContestant}
+            onRemoveTeam={handleRemoveContestant}
           />
         )}
         {view === 'judges' && currentRole === 'organizer' && (
-          <JudgeManagement
-            judges={derivedOtherJudges}
-            teams={teams}
-            onRemoveJudge={handleRemoveJudge}
-          />
+          <JudgeManagement judges={knownJudges} teams={contestants} onRemoveJudge={handleRemoveJudge} />
         )}
       </main>
     </div>
@@ -461,4 +377,3 @@ const App: React.FC = () => {
 };
 
 export default App;
-    
