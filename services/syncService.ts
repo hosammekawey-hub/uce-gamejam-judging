@@ -25,10 +25,14 @@ export const SyncService = {
 
   async signInWithGoogle() {
       try {
+          // Determine the redirect URL (e.g., https://myapp.vercel.app)
+          const redirectUrl = window.location.origin;
+          console.log("Attempting Google Sign-In with redirect to:", redirectUrl);
+
           const { data, error } = await supabase.auth.signInWithOAuth({
               provider: 'google',
               options: {
-                  redirectTo: window.location.origin,
+                  redirectTo: redirectUrl,
                   // Standard flow to prevent 403s on unverified apps
                   queryParams: {
                       access_type: 'online', 
@@ -37,7 +41,11 @@ export const SyncService = {
               }
           });
           
-          if (error) console.error("Supabase Auth Error:", error.message);
+          if (error) {
+              console.error("Supabase Auth Error:", error.message);
+              // Provide visual feedback if console is missed
+              alert(`Auth Error: ${error.message}. Ensure ${redirectUrl} is in your Supabase Redirect URLs.`);
+          }
           return { data, error };
       } catch (err) {
           console.error("Auth Exception:", err);
