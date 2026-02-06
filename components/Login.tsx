@@ -262,10 +262,20 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
   const handleJoinAsContestant = async (e: React.FormEvent) => {
       e.preventDefault();
       if (!initialUser) return;
+      
+      const eventId = joinContestantId.trim();
+
+      // Validation: Check if user is already participating in this event
+      const alreadyJoined = participatingEvents.some(evt => evt.id === eventId);
+      if (alreadyJoined) {
+          setError(`You are already a contestant in event '${eventId}'. Please manage your entry from the list below.`);
+          return;
+      }
+
       setActionLoading(true);
       setError('');
       try {
-          const res = await SyncService.joinEventAsContestant(joinContestantId.trim(), initialUser, {
+          const res = await SyncService.joinEventAsContestant(eventId, initialUser, {
               title: joinTeamName,
               description: joinTeamDesc,
               thumbnail: joinThumbnail
