@@ -84,6 +84,11 @@ const Dashboard: React.FC<DashboardProps> = ({
   };
 
   const handleSaveSettings = () => {
+      if (tempVisibility === 'private' && !tempViewPass.trim()) {
+          alert("Private events require an Access Key.");
+          return;
+      }
+
       if (onUpdateSettings) {
           onUpdateSettings({
               title: tempTitle,
@@ -344,12 +349,14 @@ const Dashboard: React.FC<DashboardProps> = ({
                            </div>
                            {tempVisibility === 'private' && (
                                <div className="animate-slideUp">
-                                   <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 block">View Password</label>
+                                   <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 block">
+                                       View Password <span className="text-rose-500">*</span>
+                                   </label>
                                    <input 
                                      value={tempViewPass}
                                      onChange={e => setTempViewPass(e.target.value)}
-                                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold"
-                                     placeholder="Set access key"
+                                     className={`w-full bg-slate-50 border rounded-xl px-4 py-3 text-sm font-bold ${!tempViewPass.trim() ? 'border-rose-300 focus:border-rose-500' : 'border-slate-200'}`}
+                                     placeholder="Set access key (Required)"
                                    />
                                </div>
                            )}
