@@ -14,6 +14,10 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
     }
 });
 
+// CRITICAL: Explicitly select only non-sensitive columns.
+// Never select 'organizer_pass' or 'judge_pass' directly in the frontend.
+const SAFE_EVENT_COLUMNS = 'id, title, description, rubric, tie_breakers, visibility, view_pass, registration, organizer_id, created_at, updated_at';
+
 export const SyncService = {
   
   // --- AUTHENTICATION ---
@@ -88,9 +92,10 @@ export const SyncService = {
   // --- FETCH LISTS ---
 
   async getEventsForOrganizer(userId: string) {
+      // Use SAFE_EVENT_COLUMNS instead of '*'
       const { data, error } = await supabase
         .from('events')
-        .select('*')
+        .select(SAFE_EVENT_COLUMNS)
         .eq('organizer_id', userId);
 
       if (error) console.error("getEventsForOrganizer DB Error:", error);
@@ -98,7 +103,9 @@ export const SyncService = {
       return (data || []).map((row: any) => ({
           ...row, 
           competitionId: row.id,
-          organizerId: row.organizer_id
+          organizerId: row.organizer_id,
+          organizerPass: '', // HIDDEN
+          judgePass: ''      // HIDDEN
       }));
   },
 
@@ -112,9 +119,10 @@ export const SyncService = {
       
       const eventIds = judges.map(j => j.event_id);
 
+      // Use SAFE_EVENT_COLUMNS instead of '*'
       const { data: events, error: eventError } = await supabase
         .from('events')
-        .select('*')
+        .select(SAFE_EVENT_COLUMNS)
         .in('id', eventIds);
       
       if (eventError) console.error("getEventsForJudge error:", eventError);
@@ -131,9 +139,10 @@ export const SyncService = {
 
       const eventIds = contestants.map(c => c.event_id);
 
+      // Use SAFE_EVENT_COLUMNS instead of '*'
       const { data: events, error: eventError } = await supabase
         .from('events')
-        .select('*')
+        .select(SAFE_EVENT_COLUMNS)
         .in('id', eventIds);
       
       return events || [];
@@ -147,29 +156,32 @@ export const SyncService = {
   },
 
   async verifyOrganizerPassword(eventId: string, password: string): Promise<{ success: boolean; config?: CompetitionConfig }> {
-      const { data, error } = await supabase.from('events').select('*').eq('id', eventId).single();
+      // SECURE RPC CALL - No password leaked
+      const { data, error } = await supabase.rpc('verify_organizer_password', {
+          p_event_id: eventId, 
+          p_password: password
+      });
       
-      if (error || !data) return { success: false };
+      if (error || !data || !data.success) return { success: false };
       
-      if (data.organizer_pass === password) {
-           const config: CompetitionConfig = {
-              competitionId: data.id,
-              title: data.title,
-              typeDescription: data.description || '',
-              organizerPass: data.organizer_pass,
-              judgePass: data.judge_pass,
-              rubric: data.rubric || [],
-              tieBreakers: data.tie_breakers || [],
-              isSetupComplete: true,
-              organizerId: data.organizer_id,
-              visibility: data.visibility || 'public',
-              viewPass: data.view_pass || '',
-              registration: data.registration || 'closed'
-           };
-           return { success: true, config };
-      }
+      const c = data.config;
+      // Map the safe RPC response to the frontend config object
+      const config: CompetitionConfig = {
+          competitionId: c.competitionId,
+          title: c.title,
+          typeDescription: c.typeDescription || '',
+          organizerPass: '', // HIDDEN
+          judgePass: '',     // HIDDEN
+          rubric: c.rubric || [],
+          tieBreakers: c.tieBreakers || [],
+          isSetupComplete: true,
+          organizerId: c.organizerId,
+          visibility: c.visibility || 'public',
+          viewPass: c.viewPass || '',
+          registration: c.registration || 'closed'
+      };
       
-      return { success: false };
+      return { success: true, config };
   },
 
   async createEvent(config: CompetitionConfig, userId?: string): Promise<{ success: boolean, message: string }> {
@@ -202,8 +214,10 @@ export const SyncService = {
       if (config.visibility) payload.visibility = config.visibility;
       if (config.registration) payload.registration = config.registration;
       if (config.viewPass !== undefined) payload.view_pass = config.viewPass;
+      
+      // Passwords can be updated, but are never read back by the client
       if (config.organizerPass !== undefined) payload.organizer_pass = config.organizerPass;
-      if (config.judgePass !== undefined) payload.judge_pass = config.judgePass; // Added Judge Pass
+      if (config.judgePass !== undefined) payload.judge_pass = config.judgePass;
       
       if (config.rubric) payload.rubric = config.rubric; 
       if (config.tieBreakers) payload.tie_breakers = config.tieBreakers;
@@ -215,15 +229,16 @@ export const SyncService = {
   // --- FETCHING FULL STATE (Dashboard) ---
 
   async getEventMetadata(id: string): Promise<CompetitionConfig | null> {
-      const { data, error } = await supabase.from('events').select('*').eq('id', id).single();
+      // Use SAFE_EVENT_COLUMNS instead of '*'
+      const { data, error } = await supabase.from('events').select(SAFE_EVENT_COLUMNS).eq('id', id).single();
       if (error || !data) return null;
 
       return {
           competitionId: data.id,
           title: data.title,
           typeDescription: data.description || '',
-          organizerPass: data.organizer_pass,
-          judgePass: data.judge_pass,
+          organizerPass: '', // HIDDEN
+          judgePass: '',     // HIDDEN
           rubric: data.rubric || [],
           tieBreakers: data.tie_breakers || [],
           isSetupComplete: true,
@@ -270,13 +285,18 @@ export const SyncService = {
   // --- JOINING / LEAVING ---
 
   async joinEventAsJudge(eventId: string, user: UserProfile, secret: string): Promise<{success: boolean, message: string}> {
-     const meta = await this.getEventMetadata(eventId);
-     if (!meta) return { success: false, message: 'Event not found' };
-     if (meta.judgePass !== secret) return { success: false, message: 'Invalid Judge Password' };
+     // SECURE RPC CALL
+     const { data: isValid, error: rpcError } = await supabase.rpc('verify_judge_password', {
+        p_event_id: eventId,
+        p_password: secret
+     });
+
+     if (rpcError) return { success: false, message: 'Verification Error' };
+     if (!isValid) return { success: false, message: 'Invalid Judge Password' };
 
      const { error } = await supabase.from('judges').upsert({
          event_id: eventId,
-         user_id: user.id, // Now we have this column!
+         user_id: user.id, 
          name: user.full_name,
          status: 'joined',
          updated_at: new Date().toISOString()
