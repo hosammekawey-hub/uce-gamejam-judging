@@ -37,6 +37,8 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
   const [joinContestantId, setJoinContestantId] = useState('');
   const [joinTeamName, setJoinTeamName] = useState(''); 
   const [joinTeamDesc, setJoinTeamDesc] = useState('');
+  const [joinThumbnail, setJoinThumbnail] = useState('');
+  const [isProcessingImg, setIsProcessingImg] = useState(false);
 
   // Guest Organizer State
   const [guestOrgId, setGuestOrgId] = useState('');
@@ -44,6 +46,7 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
 
   // Realtime subscription ref
   const dashboardSubRef = useRef<RealtimeChannel | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (initialUser?.id) {
@@ -103,6 +106,24 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
       setCreateEventId(id);
       setIdSuggestions([]);
       setError('');
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (file) {
+          if (file.size > 1024 * 1024) { // 1MB
+              setError('Image size must be less than 1MB.');
+              return;
+          }
+          setIsProcessingImg(true);
+          const reader = new FileReader();
+          reader.onload = (ev) => {
+              setJoinThumbnail(ev.target?.result as string);
+              setIsProcessingImg(false);
+              setError('');
+          };
+          reader.readAsDataURL(file);
+      }
   };
 
   const handleGuestOrganizerLogin = async (e: React.FormEvent) => {
@@ -247,7 +268,7 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
           const res = await SyncService.joinEventAsContestant(joinContestantId.trim(), initialUser, {
               title: joinTeamName,
               description: joinTeamDesc,
-              thumbnail: ''
+              thumbnail: joinThumbnail
           });
 
           if (res.success) {
@@ -255,6 +276,7 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
               setJoinContestantId('');
               setJoinTeamName('');
               setJoinTeamDesc('');
+              setJoinThumbnail('');
               setSuccessMsg('Entry registered successfully!');
               setTimeout(() => setSuccessMsg(''), 3000);
           } else {
@@ -515,7 +537,24 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
                                 <input value={joinContestantId} onChange={e => setJoinContestantId(e.target.value)} placeholder="Event ID" className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:border-emerald-500 outline-none" required />
                                 <input value={joinTeamName} onChange={e => setJoinTeamName(e.target.value)} placeholder="Project/Team Name" className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:border-emerald-500 outline-none" required />
                                 <input value={joinTeamDesc} onChange={e => setJoinTeamDesc(e.target.value)} placeholder="Short Description" className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:border-emerald-500 outline-none" />
-                                <button disabled={actionLoading} type="submit" className="w-full py-3 bg-emerald-600 rounded-xl font-black uppercase tracking-widest text-xs hover:bg-emerald-500 disabled:opacity-50">Register Entry</button>
+                                
+                                {/* Thumbnail Upload for Contestants */}
+                                <div 
+                                    onClick={() => fileInputRef.current?.click()}
+                                    className={`relative w-full h-16 rounded-xl border-2 border-dashed flex items-center justify-center cursor-pointer transition-colors ${joinThumbnail ? 'border-emerald-500 bg-emerald-900/20' : 'border-slate-700 hover:border-slate-500'}`}
+                                >
+                                    {joinThumbnail ? (
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-[10px] text-emerald-400 font-bold">Image Selected</span>
+                                            <img src={joinThumbnail} className="h-10 w-10 object-cover rounded-lg" alt="Preview" />
+                                        </div>
+                                    ) : (
+                                        <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{isProcessingImg ? 'Processing...' : 'Upload Thumbnail (Max 1MB)'}</span>
+                                    )}
+                                    <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileChange} className="hidden" />
+                                </div>
+
+                                <button disabled={actionLoading || isProcessingImg} type="submit" className="w-full py-3 bg-emerald-600 rounded-xl font-black uppercase tracking-widest text-xs hover:bg-emerald-500 disabled:opacity-50">Register Entry</button>
                             </form>
                             <p className="text-[10px] text-slate-500 text-center">Note: Only events with "Open Registration" accept new entries here.</p>
                         </div>

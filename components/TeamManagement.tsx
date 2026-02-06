@@ -26,6 +26,8 @@ const EntryManagement: React.FC<EntryManagementProps> = ({ teams, currentRole, o
   const [thumbnailBase64, setThumbnailBase64] = useState<string>('');
   const [isProcessingImg, setIsProcessingImg] = useState(false);
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
+  const [editingTeamId, setEditingTeamId] = useState<string | null>(null);
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
   const restoreInputRef = useRef<HTMLInputElement>(null);
 
@@ -41,7 +43,7 @@ const EntryManagement: React.FC<EntryManagementProps> = ({ teams, currentRole, o
   }, [existingEntry]);
 
   const processImage = (file: File): Promise<string> => {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.readAsDataURL(file);
       reader.onload = (event) => {
@@ -49,21 +51,27 @@ const EntryManagement: React.FC<EntryManagementProps> = ({ teams, currentRole, o
         img.src = event.target?.result as string;
         img.onload = () => {
           const canvas = document.createElement('canvas');
-          const scale = Math.min(1, 300 / img.width);
+          const scale = Math.min(1, 800 / img.width); // Increased resolution slightly
           canvas.width = img.width * scale;
           canvas.height = img.height * scale;
           
           const ctx = canvas.getContext('2d');
           ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
-          resolve(canvas.toDataURL('image/jpeg', 0.7));
+          resolve(canvas.toDataURL('image/jpeg', 0.8)); // slightly higher quality
         };
+        img.onerror = reject;
       };
+      reader.onerror = reject;
     });
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      if (file.size > 1024 * 1024) { // 1MB limit
+          alert("Image is too large. Max size is 1MB.");
+          return;
+      }
       setIsProcessingImg(true);
       try {
         const compressed = await processImage(file);
@@ -79,19 +87,32 @@ const EntryManagement: React.FC<EntryManagementProps> = ({ teams, currentRole, o
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (newTeam.name && newTeam.title) {
+      // Determine ID: 
+      // 1. If contestant, use existing ID or empty (new).
+      // 2. If organizer editing, use `editingTeamId`.
+      // 3. If organizer creating, use empty (new).
+      const idToUse = isContestant 
+          ? (existingEntry ? existingEntry.id : '') 
+          : (editingTeamId || '');
+
+      const userIdToUse = isContestant 
+          ? (existingEntry ? existingEntry.userId : undefined) 
+          : (editingTeamId ? teams.find(t => t.id === editingTeamId)?.userId : undefined);
+
       onAddTeam({
-        // For new manual entries, we pass an empty ID and let DB generate UUID.
-        // For updates, we pass the existing UUID.
-        id: existingEntry ? existingEntry.id : '', 
-        userId: existingEntry ? existingEntry.userId : undefined,
+        id: idToUse, 
+        userId: userIdToUse,
         name: newTeam.name,
         title: newTeam.title,
         description: newTeam.desc || 'No description provided.',
         thumbnail: thumbnailBase64
       });
+
       if (!isContestant) {
+          // Reset form after add/update
           setNewTeam({ name: '', title: '', desc: '' });
           setThumbnailBase64('');
+          setEditingTeamId(null);
           if (fileInputRef.current) fileInputRef.current.value = '';
       } else {
           alert("Entry Updated Successfully");
@@ -99,11 +120,29 @@ const EntryManagement: React.FC<EntryManagementProps> = ({ teams, currentRole, o
     }
   };
 
+  const handleEditClick = (team: Contestant) => {
+      setNewTeam({
+          name: team.name,
+          title: team.title,
+          desc: team.description
+      });
+      setThumbnailBase64(team.thumbnail);
+      setEditingTeamId(team.id);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleCancelEdit = () => {
+      setNewTeam({ name: '', title: '', desc: '' });
+      setThumbnailBase64('');
+      setEditingTeamId(null);
+  };
+
   const handleAttemptDelete = (id: string) => {
     if (!isOrganizer) return;
     if (confirmingDeleteId === id) {
       onRemoveTeam(id);
       setConfirmingDeleteId(null);
+      if (editingTeamId === id) handleCancelEdit();
     } else {
       setConfirmingDeleteId(id);
       setTimeout(() => setConfirmingDeleteId(prev => prev === id ? null : prev), 3000);
@@ -179,9 +218,14 @@ const EntryManagement: React.FC<EntryManagementProps> = ({ teams, currentRole, o
         {(isOrganizer || isContestant) && (
           <div className="lg:col-span-5">
             <div className="bg-white border border-slate-200 p-8 rounded-[2.5rem] shadow-2xl shadow-slate-200/50 sticky top-32">
-              <h3 className="text-xl font-black text-slate-900 mb-8 flex items-center gap-4">
-                <div className="w-10 h-10 bg-slate-900 text-white rounded-xl flex items-center justify-center">{isContestant ? '✎' : '＋'}</div>
-                {isContestant ? 'Edit Submission' : 'Register New Entry'}
+              <h3 className="text-xl font-black text-slate-900 mb-8 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 bg-slate-900 text-white rounded-xl flex items-center justify-center">{isContestant || editingTeamId ? '✎' : '＋'}</div>
+                    {isContestant ? 'Edit Submission' : (editingTeamId ? 'Edit Entry' : 'Register New Entry')}
+                </div>
+                {editingTeamId && (
+                    <button onClick={handleCancelEdit} className="text-xs text-rose-500 font-black uppercase hover:underline">Cancel</button>
+                )}
               </h3>
               <form onSubmit={handleSubmit} className="space-y-6">
                 <div className="space-y-2">
@@ -205,7 +249,7 @@ const EntryManagement: React.FC<EntryManagementProps> = ({ teams, currentRole, o
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Thumbnail</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Thumbnail (Max 1MB)</label>
                   <div 
                     onClick={() => !isProcessingImg && fileInputRef.current?.click()}
                     className={`relative h-40 w-full rounded-[2rem] border-2 border-dashed transition-all cursor-pointer overflow-hidden flex flex-col items-center justify-center gap-2 ${
@@ -234,9 +278,9 @@ const EntryManagement: React.FC<EntryManagementProps> = ({ teams, currentRole, o
                 <button 
                   type="submit"
                   disabled={isProcessingImg}
-                  className="w-full py-5 bg-slate-900 text-white font-black uppercase tracking-[0.3em] rounded-2xl hover:bg-indigo-600 transition-all shadow-xl active:scale-95 text-[10px] disabled:bg-slate-300"
+                  className={`w-full py-5 text-white font-black uppercase tracking-[0.3em] rounded-2xl transition-all shadow-xl active:scale-95 text-[10px] disabled:bg-slate-300 ${editingTeamId ? 'bg-amber-600 hover:bg-amber-500' : 'bg-slate-900 hover:bg-indigo-600'}`}
                 >
-                  {isContestant ? 'Update Entry' : 'Create Entry'}
+                  {isContestant ? 'Update Entry' : (editingTeamId ? 'Save Changes' : 'Create Entry')}
                 </button>
               </form>
             </div>
@@ -249,38 +293,53 @@ const EntryManagement: React.FC<EntryManagementProps> = ({ teams, currentRole, o
               <p className="text-slate-400 font-black uppercase tracking-[0.3em] text-sm">No entries found</p>
             </div>
           ) : (
-            <div className={`grid gap-6 ${isOrganizer ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'}`}>
+            <div className="flex flex-col gap-6">
               {teams.map(team => (
-                <div key={team.id} className="bg-white border border-slate-200 p-6 pr-8 rounded-[2.5rem] shadow-xl shadow-slate-200/50 flex items-center justify-between group hover:border-indigo-600 transition-all">
-                  <div className="flex items-center gap-6">
-                    <div className="h-20 w-32 rounded-[1.2rem] overflow-hidden shadow-inner bg-slate-50 flex-shrink-0 border border-slate-100">
+                <div 
+                    key={team.id} 
+                    className={`bg-white border p-6 rounded-[2.5rem] shadow-xl shadow-slate-200/50 flex flex-col sm:flex-row items-center justify-between gap-6 group hover:border-indigo-600 transition-all relative ${
+                        editingTeamId === team.id ? 'border-amber-500 ring-2 ring-amber-500/20' : 'border-slate-200'
+                    }`}
+                >
+                  <div className="flex items-center gap-8 w-full">
+                    <div className="h-28 w-40 rounded-[1.5rem] overflow-hidden shadow-inner bg-slate-50 flex-shrink-0 border border-slate-100">
                       {team.thumbnail ? (
                         <img src={team.thumbnail} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-1000" alt="" />
                       ) : (
-                         <div className="w-full h-full bg-slate-200 flex items-center justify-center text-xl">🏆</div>
+                         <div className="w-full h-full bg-slate-200 flex items-center justify-center text-3xl">🏆</div>
                       )}
                     </div>
-                    <div>
-                      <h4 className="font-black text-slate-900 text-xl tracking-tight group-hover:text-indigo-600 transition-colors leading-tight">{team.title}</h4>
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">By {team.name}</p>
+                    <div className="flex-1 min-w-0">
+                      <h4 className="font-black text-slate-900 text-3xl tracking-tight group-hover:text-indigo-600 transition-colors leading-none mb-2 truncate">{team.title}</h4>
+                      <p className="text-xs font-black text-slate-400 uppercase tracking-widest">By <span className="text-slate-600">{team.name}</span></p>
+                      {team.description && <p className="text-slate-400 text-sm mt-3 line-clamp-1">{team.description}</p>}
                     </div>
                   </div>
                   
                   {isOrganizer && (
-                    <div className="flex items-center">
+                    <div className="flex items-center gap-3 self-end sm:self-center">
+                      <button 
+                        type="button"
+                        onClick={() => handleEditClick(team)}
+                        className="p-4 rounded-[1.2rem] bg-slate-50 text-slate-400 hover:bg-amber-100 hover:text-amber-600 border border-slate-100 transition-all shadow-sm"
+                        title="Edit"
+                      >
+                        <span className="text-lg">✎</span>
+                      </button>
                       <button 
                         type="button"
                         onClick={() => handleAttemptDelete(team.id)}
-                        className={`flex flex-col items-center justify-center p-4 rounded-[1.2rem] transition-all duration-300 min-w-[70px] border ${
+                        className={`flex flex-col items-center justify-center p-4 rounded-[1.2rem] transition-all duration-300 min-w-[60px] border ${
                           confirmingDeleteId === team.id 
                           ? 'bg-rose-600 text-white border-rose-700 shadow-xl shadow-rose-600/30' 
                           : 'bg-white text-slate-300 hover:text-rose-600 hover:border-rose-200 border-slate-100 shadow-sm'
                         }`}
+                        title="Delete"
                       >
                         {confirmingDeleteId === team.id ? (
-                          <span className="text-[9px] font-black uppercase tracking-tighter">Confirm?</span>
+                          <span className="text-[9px] font-black uppercase tracking-tighter">Sure?</span>
                         ) : (
-                          <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                           </svg>
                         )}
