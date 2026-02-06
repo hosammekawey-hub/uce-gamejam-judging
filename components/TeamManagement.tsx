@@ -20,7 +20,6 @@ const EntryManagement: React.FC<EntryManagementProps> = ({ teams, currentRole, o
   const isOrganizer = currentRole === 'organizer';
   const isContestant = currentRole === 'contestant';
   
-  // If contestant, we might be editing an existing entry
   const existingEntry = isContestant && teams.length > 0 ? teams[0] : null;
 
   const [newTeam, setNewTeam] = useState({ name: '', title: '', desc: '' });
@@ -41,7 +40,6 @@ const EntryManagement: React.FC<EntryManagementProps> = ({ teams, currentRole, o
       }
   }, [existingEntry]);
 
-  // Helper to compress image
   const processImage = (file: File): Promise<string> => {
     return new Promise((resolve) => {
       const reader = new FileReader();
@@ -51,15 +49,12 @@ const EntryManagement: React.FC<EntryManagementProps> = ({ teams, currentRole, o
         img.src = event.target?.result as string;
         img.onload = () => {
           const canvas = document.createElement('canvas');
-          // Limit to 300px width to keep JSON payload under 128KB KVDB limit
           const scale = Math.min(1, 300 / img.width);
           canvas.width = img.width * scale;
           canvas.height = img.height * scale;
           
           const ctx = canvas.getContext('2d');
           ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
-          
-          // Compress to JPEG 70% quality
           resolve(canvas.toDataURL('image/jpeg', 0.7));
         };
       };
@@ -74,7 +69,7 @@ const EntryManagement: React.FC<EntryManagementProps> = ({ teams, currentRole, o
         const compressed = await processImage(file);
         setThumbnailBase64(compressed);
       } catch (err) {
-        alert("Error processing image. Please try a smaller file.");
+        alert("Error processing image.");
       } finally {
         setIsProcessingImg(false);
       }
@@ -85,7 +80,9 @@ const EntryManagement: React.FC<EntryManagementProps> = ({ teams, currentRole, o
     e.preventDefault();
     if (newTeam.name && newTeam.title) {
       onAddTeam({
-        id: existingEntry ? existingEntry.id : 'c' + Date.now(),
+        // For new manual entries, we pass an empty ID and let DB generate UUID.
+        // For updates, we pass the existing UUID.
+        id: existingEntry ? existingEntry.id : '', 
         userId: existingEntry ? existingEntry.userId : undefined,
         name: newTeam.name,
         title: newTeam.title,
@@ -114,7 +111,7 @@ const EntryManagement: React.FC<EntryManagementProps> = ({ teams, currentRole, o
   };
 
   const handleClearAll = () => {
-    if (window.confirm('Are you sure you want to delete ALL entries and ratings? This cannot be undone.')) {
+    if (window.confirm('Are you sure you want to delete ALL entries?')) {
       teams.forEach(t => onRemoveTeam(t.id));
     }
   }
@@ -179,7 +176,6 @@ const EntryManagement: React.FC<EntryManagementProps> = ({ teams, currentRole, o
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
-        {/* Registration Form */}
         {(isOrganizer || isContestant) && (
           <div className="lg:col-span-5">
             <div className="bg-white border border-slate-200 p-8 rounded-[2.5rem] shadow-2xl shadow-slate-200/50 sticky top-32">
@@ -247,7 +243,6 @@ const EntryManagement: React.FC<EntryManagementProps> = ({ teams, currentRole, o
           </div>
         )}
 
-        {/* List of Teams */}
         <div className="lg:col-span-7 space-y-6">
           {teams.length === 0 ? (
             <div className="bg-white border-2 border-dashed border-slate-200 rounded-[3rem] p-24 text-center">

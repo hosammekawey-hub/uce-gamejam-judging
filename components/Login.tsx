@@ -1,8 +1,9 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { UserRole, CompetitionConfig, UserProfile } from '../types';
 import { SyncService } from '../services/syncService';
 import { COMPETITION_TEMPLATES } from '../constants';
+import { RealtimeChannel } from '@supabase/supabase-js';
 
 interface PortalProps {
   initialUser: UserProfile | null;
@@ -11,7 +12,7 @@ interface PortalProps {
 }
 
 const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminLogin }) => {
-  const [loading, setLoading] = useState(false); // Only used for event loading, not auth
+  const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
@@ -36,19 +37,45 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
   const [joinTeamName, setJoinTeamName] = useState(''); 
   const [joinTeamDesc, setJoinTeamDesc] = useState('');
 
-  // Effect to load events when user changes (prop update)
+  // Realtime subscription ref
+  const dashboardSubRef = useRef<RealtimeChannel | null>(null);
+
+  // Use ID to track changes instead of object reference to prevent loops
   useEffect(() => {
-    if (initialUser) {
+    if (initialUser?.id) {
         refreshUserEvents(initialUser.id);
+        setupRealtimeSubscription(initialUser.id);
     } else {
         setMyEvents([]);
         setJudgingEvents([]);
         setParticipatingEvents([]);
+        if (dashboardSubRef.current) {
+            dashboardSubRef.current.unsubscribe();
+            dashboardSubRef.current = null;
+        }
     }
-  }, [initialUser]);
+
+    return () => {
+        if (dashboardSubRef.current) {
+            dashboardSubRef.current.unsubscribe();
+        }
+    };
+  }, [initialUser?.id]);
+
+  const setupRealtimeSubscription = (userId: string) => {
+      if (dashboardSubRef.current) dashboardSubRef.current.unsubscribe();
+
+      // Subscribe to changes affecting this user
+      dashboardSubRef.current = SyncService.subscribeToUserDashboard(userId, () => {
+          // On any relevant change (new event organized, new judge entry, new contestant entry), refresh lists
+          refreshUserEvents(userId);
+      });
+  };
 
   const refreshUserEvents = async (userId: string) => {
-      setLoading(true);
+      // Don't set full loading on background refreshes if we already have data
+      if (myEvents.length === 0 && judgingEvents.length === 0) setLoading(true);
+      
       try {
           const [org, jud, con] = await Promise.all([
               SyncService.getEventsForOrganizer(userId),
@@ -66,16 +93,13 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
   };
 
   const handleGoogleLogin = async () => {
-      // We don't need a local loading state here because the redirect will happen
       await SyncService.signInWithGoogle();
   };
 
   const handleLogout = async () => {
       await SyncService.signOut();
-      // App.tsx auth listener will handle the state update to null
   };
 
-  // Helper to apply a suggestion
   const applySuggestion = (id: string) => {
       setCreateEventId(id);
       setIdSuggestions([]);
@@ -90,7 +114,6 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
       setIdSuggestions([]);
 
       const cleanId = createEventId.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '');
-      console.log("Attempting to create event with ID:", cleanId);
       
       if (cleanId.length < 3) {
           setError('Event ID must be at least 3 characters.');
@@ -104,7 +127,6 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
           if (exists) {
               setError(`Event ID '${cleanId}' is unavailable.`);
               
-              // Generate candidates
               const year = new Date().getFullYear();
               const candidates = new Set([
                   `${cleanId}-${year}`,
@@ -114,7 +136,6 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
                   `${cleanId}${Math.floor(Math.random() * 9000) + 1000}`
               ]);
 
-              // Verify uniqueness of candidates
               const checks = await Promise.all(
                   Array.from(candidates).map(async (id) => {
                       const isTaken = await SyncService.checkEventExists(id);
@@ -137,7 +158,6 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
               return;
           }
 
-          // Default Config
           const newConfig: CompetitionConfig = {
               competitionId: cleanId,
               title: cleanId.toUpperCase(),
@@ -148,13 +168,14 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
               tieBreakers: [],
               isSetupComplete: false,
               organizerId: initialUser.id,
-              visibility: 'public', // Default
-              registration: 'closed' // Default
+              visibility: 'public', 
+              registration: 'closed'
           };
 
           const res = await SyncService.createEvent(newConfig, initialUser.id);
           
           if (res.success) {
+              // Refresh handled by subscription usually, but manual refresh ensures speed
               await refreshUserEvents(initialUser.id);
               setCreateEventId('');
               setCreateEventPass('');
@@ -232,7 +253,6 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
               return;
           }
 
-          // Privacy Check
           if (meta.visibility === 'private') {
               if (meta.viewPass !== viewPass) {
                   setError('Private Event: Invalid View Key.');
@@ -276,7 +296,6 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-12 text-slate-100 font-sans selection:bg-indigo-500/30">
       <div className="max-w-6xl mx-auto space-y-12">
-        
         {/* Header */}
         <div className="flex flex-col md:flex-row justify-between items-center pb-8 border-b border-white/10 gap-6">
             <div>
@@ -308,14 +327,11 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
                             Sign in with Google
                         </button>
                     </div>
-                    <p className="text-[10px] text-slate-500 max-w-[250px] text-right">
-                        Use your Google Account to sign in.
-                    </p>
                 </div>
             )}
         </div>
 
-        {/* Public View Section (Always visible) */}
+        {/* Public View Section */}
         {!initialUser && (
             <div className="bg-gradient-to-br from-indigo-900/50 to-slate-900 border border-white/10 rounded-[2.5rem] p-12 text-center space-y-8 animate-slideUp">
                 <h2 className="text-3xl font-black text-white">Public Viewer Access</h2>
@@ -343,20 +359,19 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
         {/* Authenticated Dashboard */}
         {initialUser && (
             <div className="space-y-16 animate-fadeIn">
-                
                 {/* 1. ORGANIZER SECTION */}
                 <section>
                     <div className="flex items-center gap-4 mb-8">
                         <span className="text-2xl">🎩</span>
                         <h2 className="text-2xl font-black uppercase tracking-widest">Events I Organize</h2>
+                        <button onClick={() => refreshUserEvents(initialUser.id)} className="ml-auto text-[10px] font-black uppercase tracking-widest text-slate-500 hover:text-white">Refresh</button>
                     </div>
-                    {loading ? (
+                    {loading && myEvents.length === 0 ? (
                          <div className="h-40 flex items-center justify-center border-2 border-dashed border-slate-800 rounded-[2rem]">
                              <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
                          </div>
                     ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {/* New Event Card */}
                         <div className="bg-slate-900 border-2 border-dashed border-slate-700 p-8 rounded-[2rem] flex flex-col justify-center space-y-4 hover:border-indigo-500 transition-colors">
                             <h3 className="text-lg font-black text-white">Create New Event</h3>
                             <form onSubmit={handleCreateEvent} className="space-y-3">
@@ -365,7 +380,6 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
                                         value={createEventId} 
                                         onChange={e => {
                                             setCreateEventId(e.target.value);
-                                            // Clear suggestions when user types manually
                                             if (idSuggestions.length > 0) setIdSuggestions([]);
                                             if (error) setError('');
                                         }} 
@@ -373,7 +387,6 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
                                         className={`w-full bg-slate-950 border rounded-xl px-4 py-2 text-sm text-white outline-none transition-colors ${error && idSuggestions.length > 0 ? 'border-rose-500 focus:border-rose-500' : 'border-slate-700 focus:border-indigo-500'}`} 
                                         required 
                                     />
-                                    {/* Suggestions UI */}
                                     {idSuggestions.length > 0 && (
                                         <div className="mt-3 animate-fadeIn">
                                             <p className="text-[10px] text-rose-400 font-bold mb-2">ID Unavailable. Try these:</p>
@@ -396,7 +409,6 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
                                 <button disabled={actionLoading} type="submit" className="w-full py-3 bg-indigo-600 rounded-xl font-black uppercase tracking-widest text-xs hover:bg-indigo-500 disabled:opacity-50">Create & Launch</button>
                             </form>
                         </div>
-                        {/* Existing Events */}
                         {myEvents.map(evt => (
                             <div key={evt.id} onClick={() => handleEnterContext('organizer', evt.id)} className="bg-indigo-900/20 border border-indigo-500/30 p-8 rounded-[2rem] cursor-pointer hover:bg-indigo-900/40 transition-all group">
                                 <h3 className="text-2xl font-black text-white mb-2">{evt.title}</h3>
@@ -415,7 +427,6 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
                         <h2 className="text-2xl font-black uppercase tracking-widest">Events I Judge</h2>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {/* Join Card */}
                         <div className="bg-slate-900 border-2 border-dashed border-slate-700 p-8 rounded-[2rem] flex flex-col justify-center space-y-4 hover:border-amber-500 transition-colors">
                             <h3 className="text-lg font-black text-white">Join as Judge</h3>
                             <form onSubmit={handleJoinAsJudge} className="space-y-3">
@@ -424,7 +435,6 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
                                 <button disabled={actionLoading} type="submit" className="w-full py-3 bg-amber-600 rounded-xl font-black uppercase tracking-widest text-xs hover:bg-amber-500 disabled:opacity-50">Verify & Join</button>
                             </form>
                         </div>
-                        {/* Joined Events */}
                         {judgingEvents.map(evt => (
                             <div key={evt.id} className="bg-amber-900/10 border border-amber-500/30 p-8 rounded-[2rem] relative group">
                                 <h3 className="text-2xl font-black text-white mb-2">{evt.title}</h3>
@@ -445,7 +455,6 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
                         <h2 className="text-2xl font-black uppercase tracking-widest">My Submissions</h2>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {/* Join Card */}
                         <div className="bg-slate-900 border-2 border-dashed border-slate-700 p-8 rounded-[2rem] flex flex-col justify-center space-y-4 hover:border-emerald-500 transition-colors">
                             <h3 className="text-lg font-black text-white">Enter Competition</h3>
                             <form onSubmit={handleJoinAsContestant} className="space-y-3">
@@ -456,7 +465,6 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
                             </form>
                             <p className="text-[10px] text-slate-500 text-center">Note: Only events with "Open Registration" accept new entries here.</p>
                         </div>
-                        {/* Joined Events */}
                         {participatingEvents.map(evt => (
                             <div key={evt.id} className="bg-emerald-900/10 border border-emerald-500/30 p-8 rounded-[2rem] relative group">
                                 <h3 className="text-2xl font-black text-white mb-2">{evt.title}</h3>
@@ -473,7 +481,6 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
                 {/* Global Toasts */}
                 {error && <div className="fixed bottom-6 right-6 bg-rose-600 text-white px-6 py-4 rounded-xl shadow-2xl animate-slideUp font-bold z-50">{error}</div>}
                 {successMsg && <div className="fixed bottom-6 right-6 bg-emerald-600 text-white px-6 py-4 rounded-xl shadow-2xl animate-slideUp font-bold z-50">{successMsg}</div>}
-
             </div>
         )}
       </div>

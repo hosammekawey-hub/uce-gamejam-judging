@@ -39,7 +39,7 @@ const App: React.FC = () => {
   useEffect(() => {
     let isMounted = true;
     
-    // Check initial user immediately to speed up UI if session exists in local storage
+    // Check initial user immediately
     SyncService.getCurrentUser().then(u => {
         if (isMounted && u) {
             setCurrentUser(u);
@@ -47,7 +47,6 @@ const App: React.FC = () => {
     });
 
     // Subscribe to Auth Changes globally
-    // This is the source of truth for OAuth redirects and session updates
     const { data: { subscription } } = SyncService.onAuthStateChange((event, session) => {
         console.log("App Auth Event:", event);
         
@@ -55,20 +54,23 @@ const App: React.FC = () => {
             setCurrentUser(null);
             handleExitEvent();
         } else if (session?.user) {
-            // Handle SIGNED_IN, TOKEN_REFRESHED, INITIAL_SESSION, etc.
-            // If we have a session user, we are logged in.
-            setCurrentUser({
-                id: session.user.id,
-                email: session.user.email!,
-                full_name: session.user.user_metadata.full_name || session.user.email?.split('@')[0] || 'User',
-                avatar_url: session.user.user_metadata.avatar_url
+            // PREVENT LOOP: Only update if the ID is different
+            setCurrentUser(prev => {
+                if (prev?.id === session.user.id) return prev;
+                
+                return {
+                    id: session.user.id,
+                    email: session.user.email!,
+                    full_name: session.user.user_metadata.full_name || session.user.email?.split('@')[0] || 'User',
+                    avatar_url: session.user.user_metadata.avatar_url
+                };
             });
         }
         
         if (isMounted) setAuthLoading(false);
     });
 
-    // Safety timeout to ensure loading screen goes away if auth hangs
+    // Safety timeout
     const timer = setTimeout(() => {
         if (isMounted) setAuthLoading(false);
     }, 2500);
@@ -141,7 +143,6 @@ const App: React.FC = () => {
             },
             onConfigChange: (payload) => {
                 if (payload.eventType === 'UPDATE') {
-                    // Re-wrap rubric to catch visibility updates
                     const rawRubric = payload.new.rubric || {};
                     const criteria = Array.isArray(rawRubric) ? rawRubric : (rawRubric.criteria || []);
                     
@@ -182,7 +183,6 @@ const App: React.FC = () => {
       setContestants([]);
       setRatings([]);
       setKnownJudges([]);
-      // We do NOT clear currentUser here, so they go back to Portal
   };
 
   const handleUpdateConfig = async (newRubric: Criterion[], newTieBreakers: { title: string; question: string }[]) => {
@@ -202,7 +202,6 @@ const App: React.FC = () => {
       const filtered = prev.filter(r => !(r.teamId === rating.teamId && r.judgeId === rating.judgeId));
       return [...filtered, rating];
     });
-    // Ensure we send ID-based judge ID if available
     await SyncService.upsertRating(competitionId!, rating);
     setView('dashboard');
   };
@@ -214,10 +213,9 @@ const App: React.FC = () => {
   };
 
   const handleUpdateContestant = async (c: Contestant) => {
-      // Allow self-update for contestants
       if (currentRole === 'organizer' || (currentRole === 'contestant' && currentUser && c.userId === currentUser.id)) {
            setContestants(prev => prev.map(t => t.id === c.id ? c : t));
-           await SyncService.addContestant(competitionId!, c); // Upsert handles update
+           await SyncService.addContestant(competitionId!, c);
       }
   };
 
@@ -235,11 +233,8 @@ const App: React.FC = () => {
 
   // --- DERIVED STATE ---
   
-  // Logic to identify current user in the context of the event
   const currentJudgeId = useMemo(() => {
       if (!currentUser) return null;
-      // If we have a user, their judgeID is likely their userId (UUID)
-      // Check known judges
       const j = knownJudges.find(j => j.userId === currentUser.id);
       return j ? j.id : currentUser.id; 
   }, [currentUser, knownJudges]);
@@ -251,7 +246,6 @@ const App: React.FC = () => {
       return ratings.find(r => r.teamId === selectedContestant.id && r.judgeId === currentJudgeId);
     } 
     
-    // Aggregation for Organizer, Contestant (Viewer mode), Viewer
     if (currentRole === 'organizer' || currentRole === 'viewer' || currentRole === 'contestant') {
       const teamRatings = ratings.filter(r => r.teamId === selectedContestant.id);
       if (teamRatings.length === 0) return undefined;
@@ -264,7 +258,6 @@ const App: React.FC = () => {
       });
       config.rubric.forEach(c => avgScores[c.id] = avgScores[c.id] / teamRatings.length);
 
-      // Only Organizer sees full feedback usually, but let's allow it for now or filter
       const feedbackList = teamRatings.filter(r => r.feedback?.trim()).map(r => `--- ${r.judgeId} ---\n${r.feedback}`);
       
       return {
@@ -294,7 +287,6 @@ const App: React.FC = () => {
       return <AdminPanel initialSettings={globalSettings || {judgePass:'', organizerPass:'', templates:COMPETITION_TEMPLATES}} onUpdateSettings={setGlobalSettings} onLogout={() => setAdminMode(false)} />;
   }
 
-  // If no competition selected, show Portal
   if (!competitionId) {
       return (
         <UserPortal 
@@ -305,16 +297,13 @@ const App: React.FC = () => {
       );
   }
 
-  // Event Setup Mode for Organizers
   if (currentRole === 'organizer' && !config.isSetupComplete) {
     return <CompetitionSetup onComplete={(c) => { 
-        // Sync Logic here
         SyncService.updateEventConfig(c.competitionId, {...c, isSetupComplete: true});
         setConfig({...c, isSetupComplete: true});
     }} onCancel={handleExitEvent} templates={COMPETITION_TEMPLATES} />;
   }
 
-  // Define Navigation based on Role
   const navItems = [
     { id: 'dashboard', label: 'Overview', roles: ['judge', 'organizer', 'contestant', 'viewer'] },
     { id: 'teams', label: currentRole === 'contestant' ? 'My Entry' : 'Entries', roles: ['organizer', 'contestant'] },
