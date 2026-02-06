@@ -104,15 +104,34 @@ const App: React.FC = () => {
         subscriptionRef.current = SyncService.subscribeToEvent(competitionId, {
             onTeamsChange: (payload) => {
                 if (payload.eventType === 'INSERT') {
+                    // Fix: Map snake_case payload to camelCase Contestant object
+                    const newTeam: Contestant = {
+                        id: payload.new.id,
+                        userId: payload.new.user_id,
+                        name: payload.new.name,
+                        title: payload.new.title,
+                        description: payload.new.description,
+                        thumbnail: payload.new.thumbnail
+                    };
+
                     setContestants(prev => {
                         // Prevent duplicates if optimistic update already added it (by checking ID)
-                        if (prev.some(t => t.id === payload.new.id)) return prev;
-                        return [...prev, payload.new as Contestant];
+                        if (prev.some(t => t.id === newTeam.id)) return prev;
+                        return [...prev, newTeam];
                     });
                 } else if (payload.eventType === 'DELETE') {
                     setContestants(prev => prev.filter(t => t.id !== payload.old.id));
                 } else if (payload.eventType === 'UPDATE') {
-                    setContestants(prev => prev.map(t => t.id === payload.new.id ? payload.new as Contestant : t));
+                     // Fix: Map snake_case payload to camelCase Contestant object
+                    const updatedTeam: Contestant = {
+                        id: payload.new.id,
+                        userId: payload.new.user_id,
+                        name: payload.new.name,
+                        title: payload.new.title,
+                        description: payload.new.description,
+                        thumbnail: payload.new.thumbnail
+                    };
+                    setContestants(prev => prev.map(t => t.id === updatedTeam.id ? updatedTeam : t));
                 }
             },
             onRatingsChange: (payload) => {
