@@ -42,6 +42,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [tempTieBreakers, setTempTieBreakers] = useState<{ title: string; question: string }[]>([]);
 
   // Local state for settings
+  const [tempTitle, setTempTitle] = useState('');
   const [tempVisibility, setTempVisibility] = useState<'public' | 'private'>('public');
   const [tempRegistration, setTempRegistration] = useState<'open' | 'closed'>('closed');
   const [tempViewPass, setTempViewPass] = useState('');
@@ -57,14 +58,17 @@ const Dashboard: React.FC<DashboardProps> = ({
   }, [showRubric, rubric, tieBreakers]);
 
   useEffect(() => {
-      if (showSettings && eventSettings) {
-          setTempVisibility(eventSettings.visibility);
-          setTempRegistration(eventSettings.registration);
-          setTempViewPass(eventSettings.viewPass || '');
-          setTempOrgPass(eventSettings.organizerPass || '');
-          setTempJudgePass(eventSettings.judgePass || '');
+      if (showSettings) {
+          setTempTitle(title);
+          if (eventSettings) {
+            setTempVisibility(eventSettings.visibility);
+            setTempRegistration(eventSettings.registration);
+            setTempViewPass(eventSettings.viewPass || '');
+            setTempOrgPass(eventSettings.organizerPass || '');
+            setTempJudgePass(eventSettings.judgePass || '');
+          }
       }
-  }, [showSettings, eventSettings]);
+  }, [showSettings, eventSettings, title]);
 
   const handleSave = () => {
     const totalWeight = tempRubric.reduce((acc, c) => acc + c.weight, 0);
@@ -82,6 +86,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleSaveSettings = () => {
       if (onUpdateSettings) {
           onUpdateSettings({
+              title: tempTitle,
               visibility: tempVisibility,
               registration: tempRegistration,
               viewPass: tempViewPass,
@@ -292,6 +297,16 @@ const Dashboard: React.FC<DashboardProps> = ({
                     <button onClick={() => setShowSettings(false)} className="w-10 h-10 bg-white rounded-full flex items-center justify-center text-slate-400 hover:text-rose-500 shadow-md">✕</button>
                   </div>
                   <div className="p-10 space-y-8">
+                       <div className="space-y-4">
+                           <h3 className="font-black text-sm uppercase tracking-wider text-slate-900">Event Name</h3>
+                           <input 
+                               value={tempTitle}
+                               onChange={e => setTempTitle(e.target.value)}
+                               className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                               placeholder="Event Title"
+                           />
+                       </div>
+
                        <div className="space-y-4">
                            <h3 className="font-black text-sm uppercase tracking-wider text-slate-900">Registration Status</h3>
                            <div className="flex gap-2">
