@@ -154,7 +154,8 @@ const App: React.FC = () => {
                         visibility: payload.new.visibility || 'public',
                         viewPass: payload.new.view_pass || '',
                         registration: payload.new.registration || 'closed',
-                        organizerPass: payload.new.organizer_pass
+                        organizerPass: payload.new.organizer_pass,
+                        judgePass: payload.new.judge_pass // Ensure judgePass is updated
                     }));
                 }
             }
@@ -372,7 +373,8 @@ const App: React.FC = () => {
                 visibility: config.visibility, 
                 registration: config.registration, 
                 viewPass: config.viewPass,
-                organizerPass: config.organizerPass
+                organizerPass: config.organizerPass,
+                judgePass: config.judgePass // Pass judgePass to Dashboard settings
             }}
           />
         )}

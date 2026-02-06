@@ -15,7 +15,7 @@ interface DashboardProps {
   onUpdateConfig?: (rubric: Criterion[], tieBreakers: { title: string; question: string }[]) => void;
   onUpdateSettings?: (settings: Partial<CompetitionConfig>) => void;
   canEditRubric?: boolean;
-  eventSettings?: { visibility: 'public' | 'private'; registration: 'open' | 'closed'; viewPass?: string; organizerPass?: string };
+  eventSettings?: { visibility: 'public' | 'private'; registration: 'open' | 'closed'; viewPass?: string; organizerPass?: string; judgePass?: string };
 }
 
 const Dashboard: React.FC<DashboardProps> = ({ 
@@ -46,6 +46,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [tempRegistration, setTempRegistration] = useState<'open' | 'closed'>('closed');
   const [tempViewPass, setTempViewPass] = useState('');
   const [tempOrgPass, setTempOrgPass] = useState('');
+  const [tempJudgePass, setTempJudgePass] = useState('');
 
   useEffect(() => {
     if (showRubric) {
@@ -61,6 +62,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           setTempRegistration(eventSettings.registration);
           setTempViewPass(eventSettings.viewPass || '');
           setTempOrgPass(eventSettings.organizerPass || '');
+          setTempJudgePass(eventSettings.judgePass || '');
       }
   }, [showSettings, eventSettings]);
 
@@ -83,7 +85,8 @@ const Dashboard: React.FC<DashboardProps> = ({
               visibility: tempVisibility,
               registration: tempRegistration,
               viewPass: tempViewPass,
-              organizerPass: tempOrgPass
+              organizerPass: tempOrgPass,
+              judgePass: tempJudgePass
           });
       }
       setShowSettings(false);
@@ -270,8 +273,8 @@ const Dashboard: React.FC<DashboardProps> = ({
       {/* Settings Modal */}
       {showSettings && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-8 bg-slate-900/80 backdrop-blur-md animate-fadeIn">
-              <div className="bg-white border border-slate-200 w-full max-w-2xl rounded-[3rem] shadow-[0_50px_100px_rgba(0,0,0,0.3)] overflow-hidden">
-                  <div className="px-10 py-8 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
+              <div className="bg-white border border-slate-200 w-full max-w-2xl rounded-[3rem] shadow-[0_50px_100px_rgba(0,0,0,0.3)] overflow-hidden max-h-[90vh] overflow-y-auto">
+                  <div className="px-10 py-8 border-b border-slate-100 bg-slate-50 flex justify-between items-center sticky top-0 z-10 backdrop-blur-md">
                     <div>
                         <h2 className="text-2xl font-black text-slate-900">Event Settings</h2>
                         <p className="text-slate-500 text-xs font-bold mt-1">Control access and visibility.</p>
@@ -328,17 +331,30 @@ const Dashboard: React.FC<DashboardProps> = ({
                        </div>
 
                        <div className="space-y-4 pt-4 border-t border-slate-100">
-                           <h3 className="font-black text-sm uppercase tracking-wider text-slate-900">Organizer Access</h3>
-                           <div>
-                               <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 block">Guest Organizer Password</label>
-                               <input 
-                                 type="text"
-                                 value={tempOrgPass}
-                                 onChange={e => setTempOrgPass(e.target.value)}
-                                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold font-mono text-slate-900"
-                                 placeholder="Set password"
-                               />
-                               <p className="text-[10px] text-slate-400 mt-2">Required for managing this event without a Google Account.</p>
+                           <h3 className="font-black text-sm uppercase tracking-wider text-slate-900">Security & Access</h3>
+                           <div className="grid grid-cols-1 gap-4">
+                               <div>
+                                   <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 block">Guest Organizer Password</label>
+                                   <input 
+                                     type="text"
+                                     value={tempOrgPass}
+                                     onChange={e => setTempOrgPass(e.target.value)}
+                                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold font-mono text-slate-900"
+                                     placeholder="Set organizer password"
+                                   />
+                                   <p className="text-[10px] text-slate-400 mt-2">Required for managing this event without a Google Account.</p>
+                               </div>
+                               <div>
+                                   <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 block">Judge Password</label>
+                                   <input 
+                                     type="text"
+                                     value={tempJudgePass}
+                                     onChange={e => setTempJudgePass(e.target.value)}
+                                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold font-mono text-slate-900"
+                                     placeholder="Set judge password"
+                                   />
+                                   <p className="text-[10px] text-slate-400 mt-2">Required for judges to join the event.</p>
+                               </div>
                            </div>
                        </div>
 

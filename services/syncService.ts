@@ -202,7 +202,8 @@ export const SyncService = {
       if (config.visibility) payload.visibility = config.visibility;
       if (config.registration) payload.registration = config.registration;
       if (config.viewPass !== undefined) payload.view_pass = config.viewPass;
-      if (config.organizerPass !== undefined) payload.organizer_pass = config.organizerPass; // Added this!
+      if (config.organizerPass !== undefined) payload.organizer_pass = config.organizerPass;
+      if (config.judgePass !== undefined) payload.judge_pass = config.judgePass; // Added Judge Pass
       
       if (config.rubric) payload.rubric = config.rubric; 
       if (config.tieBreakers) payload.tie_breakers = config.tieBreakers;
