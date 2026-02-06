@@ -104,7 +104,11 @@ const App: React.FC = () => {
         subscriptionRef.current = SyncService.subscribeToEvent(competitionId, {
             onTeamsChange: (payload) => {
                 if (payload.eventType === 'INSERT') {
-                    setContestants(prev => [...prev, payload.new as Contestant]);
+                    setContestants(prev => {
+                        // Prevent duplicates if optimistic update already added it (by checking ID)
+                        if (prev.some(t => t.id === payload.new.id)) return prev;
+                        return [...prev, payload.new as Contestant];
+                    });
                 } else if (payload.eventType === 'DELETE') {
                     setContestants(prev => prev.filter(t => t.id !== payload.old.id));
                 } else if (payload.eventType === 'UPDATE') {
@@ -210,14 +214,28 @@ const App: React.FC = () => {
     setView('dashboard');
   };
 
-  const handleAddContestant = async (c: Contestant) => {
+  const handleOrganizerUpsertContestant = async (c: Contestant) => {
     if (currentRole !== 'organizer') return;
-    setContestants(prev => [...prev, c]);
+
+    // Optimistic Update: ONLY if editing an existing entry (has ID). 
+    // If creating new (no ID), we wait for Realtime to insert it to avoid duplicate/ghost entries.
+    if (c.id && c.id.length > 10) {
+      setContestants(prev => {
+        const index = prev.findIndex(t => t.id === c.id);
+        if (index > -1) {
+          const updated = [...prev];
+          updated[index] = c;
+          return updated;
+        }
+        return [...prev, c];
+      });
+    }
+    
     await SyncService.addContestant(competitionId!, c);
   };
 
-  const handleUpdateContestant = async (c: Contestant) => {
-      if (currentRole === 'organizer' || (currentRole === 'contestant' && currentUser && c.userId === currentUser.id)) {
+  const handleContestantUpdateOwn = async (c: Contestant) => {
+      if (currentRole === 'contestant' && currentUser && c.userId === currentUser.id) {
            setContestants(prev => prev.map(t => t.id === c.id ? c : t));
            await SyncService.addContestant(competitionId!, c);
       }
@@ -397,7 +415,7 @@ const App: React.FC = () => {
           <EntryManagement 
             teams={currentRole === 'contestant' && currentUser ? contestants.filter(c => c.userId === currentUser.id) : contestants}
             currentRole={currentRole}
-            onAddTeam={currentRole === 'contestant' ? handleUpdateContestant : handleAddContestant}
+            onAddTeam={currentRole === 'contestant' ? handleContestantUpdateOwn : handleOrganizerUpsertContestant}
             onRemoveTeam={handleRemoveContestant}
           />
         )}
