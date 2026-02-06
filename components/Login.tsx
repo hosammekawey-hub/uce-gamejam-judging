@@ -5,13 +5,13 @@ import { SyncService } from '../services/syncService';
 import { COMPETITION_TEMPLATES } from '../constants';
 
 interface PortalProps {
+  initialUser: UserProfile | null;
   onEnterEvent: (role: UserRole, competitionId: string, config?: CompetitionConfig, user?: UserProfile) => void;
   onAdminLogin: () => void;
 }
 
-const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
-  const [user, setUser] = useState<UserProfile | null>(null);
-  const [loading, setLoading] = useState(true);
+const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminLogin }) => {
+  const [loading, setLoading] = useState(false); // Only used for event loading, not auth
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
@@ -36,73 +36,19 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
   const [joinTeamName, setJoinTeamName] = useState(''); 
   const [joinTeamDesc, setJoinTeamDesc] = useState('');
 
-  // Initial Load and Auth Subscription
+  // Effect to load events when user changes (prop update)
   useEffect(() => {
-    let isMounted = true;
-
-    // Safety timeout: If auth checks hang, force loading off after 3 seconds
-    const safetyTimer = setTimeout(() => {
-        if (isMounted) setLoading(false);
-    }, 3000);
-
-    // 1. Check current state immediately
-    checkUser().then(() => {
-        if (isMounted && loading) setLoading(false);
-    });
-
-    // 2. Subscribe to Auth Changes
-    const { data: { subscription } } = SyncService.onAuthStateChange(async (event, session) => {
-      try {
-          if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-             if (session?.user) {
-                 const u: UserProfile = {
-                     id: session.user.id,
-                     email: session.user.email!,
-                     full_name: session.user.user_metadata.full_name || session.user.email?.split('@')[0] || 'User',
-                     avatar_url: session.user.user_metadata.avatar_url
-                 };
-                 if (isMounted) {
-                     setUser(u);
-                     await refreshUserEvents(u.id);
-                 }
-             }
-          } else if (event === 'SIGNED_OUT') {
-              if (isMounted) {
-                  setUser(null);
-                  setMyEvents([]);
-                  setJudgingEvents([]);
-                  setParticipatingEvents([]);
-              }
-          }
-      } catch (err) {
-          console.error("Auth change error:", err);
-      } finally {
-          if (isMounted) setLoading(false);
-      }
-    });
-
-    return () => {
-      isMounted = false;
-      clearTimeout(safetyTimer);
-      subscription.unsubscribe();
-    };
-  }, []);
-
-  const checkUser = async () => {
-    try {
-        const u = await SyncService.getCurrentUser();
-        setUser(u);
-        if (u) {
-            await refreshUserEvents(u.id);
-        }
-    } catch (e) {
-        console.error("Check user failed", e);
-    } finally {
-        setLoading(false);
+    if (initialUser) {
+        refreshUserEvents(initialUser.id);
+    } else {
+        setMyEvents([]);
+        setJudgingEvents([]);
+        setParticipatingEvents([]);
     }
-  };
+  }, [initialUser]);
 
   const refreshUserEvents = async (userId: string) => {
+      setLoading(true);
       try {
           const [org, jud, con] = await Promise.all([
               SyncService.getEventsForOrganizer(userId),
@@ -114,16 +60,19 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
           setParticipatingEvents(con);
       } catch (err) {
           console.error("Failed to refresh events", err);
+      } finally {
+          setLoading(false);
       }
   };
 
   const handleGoogleLogin = async () => {
-      setLoading(true);
+      // We don't need a local loading state here because the redirect will happen
       await SyncService.signInWithGoogle();
   };
 
   const handleLogout = async () => {
       await SyncService.signOut();
+      // App.tsx auth listener will handle the state update to null
   };
 
   // Helper to apply a suggestion
@@ -135,7 +84,7 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
 
   const handleCreateEvent = async (e: React.FormEvent) => {
       e.preventDefault();
-      if (!user) return;
+      if (!initialUser) return;
       setActionLoading(true);
       setError('');
       setIdSuggestions([]);
@@ -198,20 +147,20 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
               rubric: COMPETITION_TEMPLATES[0].rubric,
               tieBreakers: [],
               isSetupComplete: false,
-              organizerId: user.id,
+              organizerId: initialUser.id,
               visibility: 'public', // Default
               registration: 'closed' // Default
           };
 
-          const res = await SyncService.createEvent(newConfig, user.id);
+          const res = await SyncService.createEvent(newConfig, initialUser.id);
           
           if (res.success) {
-              await refreshUserEvents(user.id);
+              await refreshUserEvents(initialUser.id);
               setCreateEventId('');
               setCreateEventPass('');
               setSuccessMsg(`Event '${cleanId}' created successfully!`);
               setTimeout(() => setSuccessMsg(''), 5000);
-              onEnterEvent('organizer', cleanId, newConfig, user);
+              onEnterEvent('organizer', cleanId, newConfig, initialUser);
           } else {
               setError(`Failed to create event: ${res.message}`);
           }
@@ -224,13 +173,13 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
 
   const handleJoinAsJudge = async (e: React.FormEvent) => {
       e.preventDefault();
-      if (!user) return;
+      if (!initialUser) return;
       setActionLoading(true);
       setError('');
       try {
-          const res = await SyncService.joinEventAsJudge(joinJudgeId.trim(), user, joinJudgeSecret);
+          const res = await SyncService.joinEventAsJudge(joinJudgeId.trim(), initialUser, joinJudgeSecret);
           if (res.success) {
-              await refreshUserEvents(user.id);
+              await refreshUserEvents(initialUser.id);
               setJoinJudgeId('');
               setJoinJudgeSecret('');
               setSuccessMsg('Joined successfully as a Judge!');
@@ -246,18 +195,18 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
 
   const handleJoinAsContestant = async (e: React.FormEvent) => {
       e.preventDefault();
-      if (!user) return;
+      if (!initialUser) return;
       setActionLoading(true);
       setError('');
       try {
-          const res = await SyncService.joinEventAsContestant(joinContestantId.trim(), user, {
+          const res = await SyncService.joinEventAsContestant(joinContestantId.trim(), initialUser, {
               title: joinTeamName,
               description: joinTeamDesc,
               thumbnail: ''
           });
 
           if (res.success) {
-              await refreshUserEvents(user.id);
+              await refreshUserEvents(initialUser.id);
               setJoinContestantId('');
               setJoinTeamName('');
               setJoinTeamDesc('');
@@ -291,7 +240,7 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
               }
           }
 
-          onEnterEvent('viewer', id, meta, user || undefined);
+          onEnterEvent('viewer', id, meta, initialUser || undefined);
       } catch (err) {
           setError('Could not fetch event.');
       }
@@ -301,7 +250,7 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
       try {
           const meta = await SyncService.getEventMetadata(eventId);
           if (meta) {
-              onEnterEvent(role, eventId, meta, user || undefined);
+              onEnterEvent(role, eventId, meta, initialUser || undefined);
           }
       } catch (err) {
           console.error(err);
@@ -309,27 +258,20 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
   };
 
   const handleWithdraw = async (eventId: string) => {
-      if (!user) return;
+      if (!initialUser) return;
       if (window.confirm("Are you sure you want to withdraw from this event?")) {
-          await SyncService.withdrawAsContestant(eventId, user.id);
-          await refreshUserEvents(user.id);
+          await SyncService.withdrawAsContestant(eventId, initialUser.id);
+          await refreshUserEvents(initialUser.id);
       }
   };
   
   const handleLeaveJudge = async (eventId: string) => {
-      if (!user) return;
+      if (!initialUser) return;
       if (window.confirm("Leave judging panel? Your ratings will be removed.")) {
-          await SyncService.leaveEventAsJudge(eventId, user.id);
-          await refreshUserEvents(user.id);
+          await SyncService.leaveEventAsJudge(eventId, initialUser.id);
+          await refreshUserEvents(initialUser.id);
       }
   };
-
-  if (loading) return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-white space-y-4">
-          <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
-          <p className="font-bold tracking-widest uppercase text-xs animate-pulse">Loading Portal...</p>
-      </div>
-  );
 
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-12 text-slate-100 font-sans selection:bg-indigo-500/30">
@@ -341,16 +283,16 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
                 <h1 className="text-4xl font-black tracking-tight text-white mb-2">JudgePro <span className="text-indigo-500">Portal</span></h1>
                 <p className="text-slate-400 font-medium">Universal Competition Management System</p>
             </div>
-            {user ? (
+            {initialUser ? (
                 <div className="flex items-center gap-6">
                     <div className="text-right hidden md:block">
-                        <p className="font-bold text-white">{user.full_name}</p>
-                        <p className="text-xs text-slate-500">{user.email}</p>
+                        <p className="font-bold text-white">{initialUser.full_name}</p>
+                        <p className="text-xs text-slate-500">{initialUser.email}</p>
                     </div>
-                    {user.avatar_url ? (
-                        <img src={user.avatar_url} className="w-12 h-12 rounded-full border-2 border-indigo-500" alt="Avatar" />
+                    {initialUser.avatar_url ? (
+                        <img src={initialUser.avatar_url} className="w-12 h-12 rounded-full border-2 border-indigo-500" alt="Avatar" />
                     ) : (
-                        <div className="w-12 h-12 rounded-full bg-indigo-600 flex items-center justify-center font-black text-xl">{user.full_name[0]}</div>
+                        <div className="w-12 h-12 rounded-full bg-indigo-600 flex items-center justify-center font-black text-xl">{initialUser.full_name[0]}</div>
                     )}
                     <button onClick={handleLogout} className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-rose-900/50 text-slate-300 hover:text-white transition-all text-xs font-black uppercase tracking-widest">Logout</button>
                 </div>
@@ -374,7 +316,7 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
         </div>
 
         {/* Public View Section (Always visible) */}
-        {!user && (
+        {!initialUser && (
             <div className="bg-gradient-to-br from-indigo-900/50 to-slate-900 border border-white/10 rounded-[2.5rem] p-12 text-center space-y-8 animate-slideUp">
                 <h2 className="text-3xl font-black text-white">Public Viewer Access</h2>
                 <p className="text-indigo-200">Watch competitions live. If event is private, enter the access key.</p>
@@ -399,7 +341,7 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
         )}
 
         {/* Authenticated Dashboard */}
-        {user && (
+        {initialUser && (
             <div className="space-y-16 animate-fadeIn">
                 
                 {/* 1. ORGANIZER SECTION */}
@@ -408,6 +350,11 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
                         <span className="text-2xl">🎩</span>
                         <h2 className="text-2xl font-black uppercase tracking-widest">Events I Organize</h2>
                     </div>
+                    {loading ? (
+                         <div className="h-40 flex items-center justify-center border-2 border-dashed border-slate-800 rounded-[2rem]">
+                             <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+                         </div>
+                    ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                         {/* New Event Card */}
                         <div className="bg-slate-900 border-2 border-dashed border-slate-700 p-8 rounded-[2rem] flex flex-col justify-center space-y-4 hover:border-indigo-500 transition-colors">
@@ -458,6 +405,7 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
                             </div>
                         ))}
                     </div>
+                    )}
                 </section>
 
                 {/* 2. JUDGE SECTION */}

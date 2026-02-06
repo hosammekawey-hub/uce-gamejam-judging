@@ -16,6 +16,7 @@ import { RealtimeChannel } from '@supabase/supabase-js';
 const App: React.FC = () => {
   // State for Authentication and Context
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [currentRole, setCurrentRole] = useState<UserRole>('viewer');
   const [competitionId, setCompetitionId] = useState<string | null>(null);
   const [adminMode, setAdminMode] = useState(false);
@@ -36,13 +37,19 @@ const App: React.FC = () => {
 
   // --- 1. INITIAL LOAD & SUBSCRIPTIONS ---
   useEffect(() => {
-    // Check initial user
+    let isMounted = true;
+    
+    // Check initial user immediately
     SyncService.getCurrentUser().then(u => {
-        if (u) setCurrentUser(u);
+        if (isMounted) {
+            if (u) setCurrentUser(u);
+            // Don't turn off loading yet, wait for auth listener confirmation mostly
+        }
     });
 
     // Subscribe to Auth Changes globally
     const { data: { subscription } } = SyncService.onAuthStateChange((event, session) => {
+        console.log("App Auth Event:", event);
         if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
             if (session?.user) {
                 setCurrentUser({
@@ -56,10 +63,18 @@ const App: React.FC = () => {
             setCurrentUser(null);
             handleExitEvent();
         }
+        if (isMounted) setAuthLoading(false);
     });
 
+    // Safety timeout to ensure loading screen goes away
+    const timer = setTimeout(() => {
+        if (isMounted) setAuthLoading(false);
+    }, 2000);
+
     return () => {
+        isMounted = false;
         subscription.unsubscribe();
+        clearTimeout(timer);
     };
   }, []);
 
@@ -264,13 +279,28 @@ const App: React.FC = () => {
 
   // --- RENDER ---
 
+  if (authLoading) {
+      return (
+        <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-white space-y-4">
+            <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+            <p className="font-bold tracking-widest uppercase text-xs animate-pulse">Initializing App...</p>
+        </div>
+      );
+  }
+
   if (adminMode) {
       return <AdminPanel initialSettings={globalSettings || {judgePass:'', organizerPass:'', templates:COMPETITION_TEMPLATES}} onUpdateSettings={setGlobalSettings} onLogout={() => setAdminMode(false)} />;
   }
 
   // If no competition selected, show Portal
   if (!competitionId) {
-      return <UserPortal onEnterEvent={handleEnterEvent} onAdminLogin={() => setAdminMode(true)} />;
+      return (
+        <UserPortal 
+            initialUser={currentUser}
+            onEnterEvent={handleEnterEvent} 
+            onAdminLogin={() => setAdminMode(true)} 
+        />
+      );
   }
 
   // Event Setup Mode for Organizers

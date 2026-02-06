@@ -10,7 +10,11 @@ const SUPABASE_URL = 'https://aefegdmffmwrukeoqjbm.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFlZmVnZG1mZm13cnVrZW9xamJtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk4OTY0OTEsImV4cCI6MjA4NTQ3MjQ5MX0.ejK09pWZJimLzpWb8OtDKh7Nc-18rDUy6aRivE_ZLwg';
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
-    auth: { persistSession: true }
+    auth: { 
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true 
+    }
 });
 
 export const SyncService = {
@@ -33,7 +37,6 @@ export const SyncService = {
               provider: 'google',
               options: {
                   redirectTo: redirectUrl,
-                  // Standard flow to prevent 403s on unverified apps
                   queryParams: {
                       access_type: 'online', 
                       prompt: 'select_account'
@@ -43,7 +46,6 @@ export const SyncService = {
           
           if (error) {
               console.error("Supabase Auth Error:", error.message);
-              // Provide visual feedback if console is missed
               alert(`Auth Error: ${error.message}. Ensure ${redirectUrl} is in your Supabase Redirect URLs.`);
           }
           return { data, error };
@@ -58,27 +60,40 @@ export const SyncService = {
   },
 
   async getCurrentUser(): Promise<UserProfile | null> {
-      // 1. Check local session first (faster)
-      const { data: { session } } = await supabase.auth.getSession();
-      let user = session?.user;
+      try {
+          // 1. Check local session first (faster)
+          const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+          if (sessionError) throw sessionError;
+          
+          let user = session?.user;
 
-      // 2. If no session, try fetching from server
-      if (!user) {
-          const { data, error } = await supabase.auth.getUser();
-          if (error && !error.message.includes("Auth session missing")) {
-              console.warn("User check warning:", error.message);
+          // 2. If no session, try fetching from server
+          if (!user) {
+              const { data, error } = await supabase.auth.getUser();
+              if (error) {
+                  // Ignore AbortError which happens during OAuth redirects
+                  if (error.name === 'AbortError' || error.message.includes('AbortError')) {
+                      return null;
+                  }
+                  if (!error.message.includes("Auth session missing")) {
+                      console.warn("User check warning:", error.message);
+                  }
+              }
+              user = data.user;
           }
-          user = data.user;
+          
+          if (!user) return null;
+          
+          return {
+              id: user.id,
+              email: user.email!,
+              full_name: user.user_metadata.full_name || user.email?.split('@')[0] || 'User',
+              avatar_url: user.user_metadata.avatar_url
+          };
+      } catch (err) {
+          console.error("getCurrentUser failed:", err);
+          return null;
       }
-      
-      if (!user) return null;
-      
-      return {
-          id: user.id,
-          email: user.email!,
-          full_name: user.user_metadata.full_name || user.email?.split('@')[0] || 'User',
-          avatar_url: user.user_metadata.avatar_url
-      };
   },
 
   // --- GLOBAL SETTINGS ---
