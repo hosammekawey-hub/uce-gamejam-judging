@@ -168,11 +168,14 @@ export const SyncService = {
   // --- EVENT MANAGEMENT ---
 
   async checkEventExists(id: string): Promise<boolean> {
-      const { count } = await supabase.from('events').select('*', { count: 'exact', head: true }).eq('id', id);
+      const { count, error } = await supabase.from('events').select('*', { count: 'exact', head: true }).eq('id', id);
+      if (error) {
+          console.error("Check exists error:", error);
+      }
       return (count || 0) > 0;
   },
 
-  async createEvent(config: CompetitionConfig, userId?: string): Promise<boolean> {
+  async createEvent(config: CompetitionConfig, userId?: string): Promise<{ success: boolean, message: string }> {
       const { error } = await supabase.from('events').insert({
           id: config.competitionId,
           title: config.title,
@@ -188,7 +191,12 @@ export const SyncService = {
           tie_breakers: config.tieBreakers,
           organizer_id: userId || null
       });
-      return !error;
+      
+      if (error) {
+          console.error("Create event error:", error);
+          return { success: false, message: error.message };
+      }
+      return { success: true, message: 'Event created' };
   },
 
   async updateEventConfig(id: string, config: Partial<CompetitionConfig>): Promise<boolean> {

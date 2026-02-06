@@ -141,6 +141,7 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
       setIdSuggestions([]);
 
       const cleanId = createEventId.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '');
+      console.log("Attempting to create event with ID:", cleanId);
       
       if (cleanId.length < 3) {
           setError('Event ID must be at least 3 characters.');
@@ -202,8 +203,9 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
               registration: 'closed' // Default
           };
 
-          const success = await SyncService.createEvent(newConfig, user.id);
-          if (success) {
+          const res = await SyncService.createEvent(newConfig, user.id);
+          
+          if (res.success) {
               await refreshUserEvents(user.id);
               setCreateEventId('');
               setCreateEventPass('');
@@ -211,11 +213,11 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
               setTimeout(() => setSuccessMsg(''), 5000);
               onEnterEvent('organizer', cleanId, newConfig, user);
           } else {
-              setError('Failed to create event. Database error.');
+              setError(`Failed to create event: ${res.message}`);
           }
-      } catch (err) {
-          console.error(err);
-          setError('An unexpected error occurred.');
+      } catch (err: any) {
+          console.error("Create event exception:", err);
+          setError(`An unexpected error occurred: ${err.message || 'Unknown error'}`);
       }
       setActionLoading(false);
   };
