@@ -40,6 +40,11 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
   useEffect(() => {
     let isMounted = true;
 
+    // Safety timeout: If auth checks hang, force loading off after 3 seconds
+    const safetyTimer = setTimeout(() => {
+        if (isMounted) setLoading(false);
+    }, 3000);
+
     // 1. Check current state immediately
     checkUser().then(() => {
         if (isMounted && loading) setLoading(false);
@@ -78,6 +83,7 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
 
     return () => {
       isMounted = false;
+      clearTimeout(safetyTimer);
       subscription.unsubscribe();
     };
   }, []);
