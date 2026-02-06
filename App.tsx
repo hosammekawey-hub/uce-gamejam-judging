@@ -39,37 +39,39 @@ const App: React.FC = () => {
   useEffect(() => {
     let isMounted = true;
     
-    // Check initial user immediately
+    // Check initial user immediately to speed up UI if session exists in local storage
     SyncService.getCurrentUser().then(u => {
-        if (isMounted) {
-            if (u) setCurrentUser(u);
-            // Don't turn off loading yet, wait for auth listener confirmation mostly
+        if (isMounted && u) {
+            setCurrentUser(u);
         }
     });
 
     // Subscribe to Auth Changes globally
+    // This is the source of truth for OAuth redirects and session updates
     const { data: { subscription } } = SyncService.onAuthStateChange((event, session) => {
         console.log("App Auth Event:", event);
-        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-            if (session?.user) {
-                setCurrentUser({
-                    id: session.user.id,
-                    email: session.user.email!,
-                    full_name: session.user.user_metadata.full_name || session.user.email?.split('@')[0] || 'User',
-                    avatar_url: session.user.user_metadata.avatar_url
-                });
-            }
-        } else if (event === 'SIGNED_OUT') {
+        
+        if (event === 'SIGNED_OUT') {
             setCurrentUser(null);
             handleExitEvent();
+        } else if (session?.user) {
+            // Handle SIGNED_IN, TOKEN_REFRESHED, INITIAL_SESSION, etc.
+            // If we have a session user, we are logged in.
+            setCurrentUser({
+                id: session.user.id,
+                email: session.user.email!,
+                full_name: session.user.user_metadata.full_name || session.user.email?.split('@')[0] || 'User',
+                avatar_url: session.user.user_metadata.avatar_url
+            });
         }
+        
         if (isMounted) setAuthLoading(false);
     });
 
-    // Safety timeout to ensure loading screen goes away
+    // Safety timeout to ensure loading screen goes away if auth hangs
     const timer = setTimeout(() => {
         if (isMounted) setAuthLoading(false);
-    }, 2000);
+    }, 2500);
 
     return () => {
         isMounted = false;
