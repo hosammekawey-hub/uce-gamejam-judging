@@ -13,7 +13,7 @@ interface RatingFormProps {
 }
 
 const RatingForm: React.FC<RatingFormProps> = ({ team, rubric, judgeName, currentRole, existingRating, onSave, onCancel }) => {
-  const isReadOnly = currentRole === 'organizer';
+  const isReadOnly = currentRole !== 'judge';
 
   const [scores, setScores] = useState<ScoreSet>(() => {
     if (existingRating) return existingRating.scores;
@@ -55,7 +55,7 @@ const RatingForm: React.FC<RatingFormProps> = ({ team, rubric, judgeName, curren
         <div className="bg-amber-100 border-2 border-amber-200 p-6 rounded-[2rem] flex items-center justify-center gap-4 shadow-lg">
           <span className="text-2xl">📊</span>
           <p className="text-amber-800 font-black uppercase tracking-widest text-sm">
-            Organizer Mode: Viewing Average Scores & Aggregated Feedback
+            {currentRole === 'organizer' ? 'Organizer Mode: Viewing Average Scores' : 'Read-Only: Viewing Aggregate Scores'}
           </p>
         </div>
       )}

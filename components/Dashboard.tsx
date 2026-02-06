@@ -129,7 +129,9 @@ const Dashboard: React.FC<DashboardProps> = ({
           <p className="text-slate-500 font-bold mt-4 text-lg">
             {currentRole === 'organizer' 
               ? `Management Console: ${teams.length} entries registered.` 
-              : `Judging Portal: Reviewing ${teams.length} entries.`}
+              : currentRole === 'judge'
+                ? `Judging Portal: Reviewing ${teams.length} entries.`
+                : `Event Overview: ${teams.length} active entries.`}
           </p>
         </div>
         <div className="flex gap-4">
@@ -222,6 +224,20 @@ const Dashboard: React.FC<DashboardProps> = ({
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-10">
           {teams.map(team => {
             const isRated = getTeamStatus(team.id);
+            
+            let actionLabel = 'View Stats';
+            let actionClass = 'bg-slate-100 text-slate-600 hover:bg-slate-200';
+
+            if (currentRole === 'organizer') {
+                actionLabel = 'View Record';
+                actionClass = 'bg-amber-100 text-amber-700 hover:bg-amber-600 hover:text-white';
+            } else if (currentRole === 'judge') {
+                actionLabel = isRated ? 'Update' : 'Evaluate';
+                actionClass = isRated 
+                    ? 'bg-slate-100 text-slate-600 hover:bg-indigo-600 hover:text-white shadow-sm' 
+                    : 'bg-indigo-600 text-white hover:bg-indigo-500 shadow-xl shadow-indigo-600/30';
+            }
+
             return (
               <div 
                 key={team.id}
@@ -252,14 +268,8 @@ const Dashboard: React.FC<DashboardProps> = ({
                   <p className="text-slate-600 font-bold leading-relaxed mb-10 line-clamp-2 h-14 text-sm opacity-80 group-hover:opacity-100 transition-opacity">{team.description}</p>
                   <div className="flex justify-between items-center pt-8 border-t border-slate-100">
                     <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest">ID: {team.id}</span>
-                    <button className={`px-8 py-4 rounded-2xl font-black text-[10px] uppercase tracking-[0.3em] transition-all ${
-                      currentRole === 'organizer' 
-                        ? 'bg-amber-100 text-amber-700 hover:bg-amber-600 hover:text-white'
-                        : isRated 
-                          ? 'bg-slate-100 text-slate-600 hover:bg-indigo-600 hover:text-white shadow-sm' 
-                          : 'bg-indigo-600 text-white hover:bg-indigo-500 shadow-xl shadow-indigo-600/30'
-                    }`}>
-                      {currentRole === 'organizer' ? 'View Record' : (isRated ? 'Update' : 'Evaluate')}
+                    <button className={`px-8 py-4 rounded-2xl font-black text-[10px] uppercase tracking-[0.3em] transition-all ${actionClass}`}>
+                      {actionLabel}
                     </button>
                   </div>
                 </div>
