@@ -14,6 +14,7 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState('');
+  const [successMsg, setSuccessMsg] = useState(''); // New success feedback
 
   // Lists for authenticated user
   const [myEvents, setMyEvents] = useState<any[]>([]);
@@ -29,6 +30,7 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
   
   const [createEventId, setCreateEventId] = useState('');
   const [createEventPass, setCreateEventPass] = useState('');
+  const [idSuggestions, setIdSuggestions] = useState<string[]>([]); // New state for suggestions
   
   const [joinContestantId, setJoinContestantId] = useState('');
   const [joinTeamName, setJoinTeamName] = useState(''); 
@@ -96,15 +98,63 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
       // State is handled by onAuthStateChange listener
   };
 
+  // Helper to apply a suggestion
+  const applySuggestion = (id: string) => {
+      setCreateEventId(id);
+      setIdSuggestions([]);
+      setError('');
+  };
+
   const handleCreateEvent = async (e: React.FormEvent) => {
       e.preventDefault();
       if (!user) return;
       setActionLoading(true);
+      setError('');
+      setIdSuggestions([]);
+
       const cleanId = createEventId.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '');
+      
+      if (cleanId.length < 3) {
+          setError('Event ID must be at least 3 characters.');
+          setActionLoading(false);
+          return;
+      }
+
       const exists = await SyncService.checkEventExists(cleanId);
       
       if (exists) {
-          setError('Event ID already taken.');
+          setError(`Event ID '${cleanId}' is unavailable.`);
+          
+          // Generate candidates
+          const year = new Date().getFullYear();
+          const candidates = new Set([
+              `${cleanId}-${year}`,
+              `${cleanId}${Math.floor(Math.random() * 900) + 100}`,
+              `${cleanId}-event`,
+              `the-${cleanId}`,
+              `${cleanId}${Math.floor(Math.random() * 9000) + 1000}`
+          ]);
+
+          // Verify uniqueness of candidates
+          const checks = await Promise.all(
+              Array.from(candidates).map(async (id) => {
+                  const isTaken = await SyncService.checkEventExists(id);
+                  return { id, available: !isTaken };
+              })
+          );
+
+          const validSuggestions = checks
+              .filter(c => c.available)
+              .map(c => c.id)
+              .slice(0, 3);
+
+          if (validSuggestions.length > 0) {
+            setIdSuggestions(validSuggestions);
+          } else {
+             // Fallback if all taken (rare)
+             setIdSuggestions([`${cleanId}-${Date.now().toString().slice(-6)}`]);
+          }
+          
           setActionLoading(false);
           return;
       }
@@ -127,9 +177,14 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
       const success = await SyncService.createEvent(newConfig, user.id);
       if (success) {
           await refreshUserEvents(user.id);
+          // Don't auto-enter, let them see it created or decide
+          setCreateEventId('');
+          setCreateEventPass('');
+          setSuccessMsg(`Event '${cleanId}' created successfully!`);
+          setTimeout(() => setSuccessMsg(''), 5000);
           onEnterEvent('organizer', cleanId, newConfig, user);
       } else {
-          setError('Failed to create event.');
+          setError('Failed to create event. Database error.');
       }
       setActionLoading(false);
   };
@@ -138,11 +193,14 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
       e.preventDefault();
       if (!user) return;
       setActionLoading(true);
+      setError('');
       const res = await SyncService.joinEventAsJudge(joinJudgeId.trim(), user, joinJudgeSecret);
       if (res.success) {
           await refreshUserEvents(user.id);
           setJoinJudgeId('');
           setJoinJudgeSecret('');
+          setSuccessMsg('Joined successfully as a Judge!');
+          setTimeout(() => setSuccessMsg(''), 3000);
       } else {
           setError(res.message);
       }
@@ -153,6 +211,7 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
       e.preventDefault();
       if (!user) return;
       setActionLoading(true);
+      setError('');
       
       const res = await SyncService.joinEventAsContestant(joinContestantId.trim(), user, {
           title: joinTeamName,
@@ -165,6 +224,8 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
           setJoinContestantId('');
           setJoinTeamName('');
           setJoinTeamDesc('');
+          setSuccessMsg('Entry registered successfully!');
+          setTimeout(() => setSuccessMsg(''), 3000);
       } else {
           setError(res.message);
       }
@@ -299,7 +360,38 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
                         <div className="bg-slate-900 border-2 border-dashed border-slate-700 p-8 rounded-[2rem] flex flex-col justify-center space-y-4 hover:border-indigo-500 transition-colors">
                             <h3 className="text-lg font-black text-white">Create New Event</h3>
                             <form onSubmit={handleCreateEvent} className="space-y-3">
-                                <input value={createEventId} onChange={e => setCreateEventId(e.target.value)} placeholder="Unique Event ID" className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:border-indigo-500 outline-none" required />
+                                <div>
+                                    <input 
+                                        value={createEventId} 
+                                        onChange={e => {
+                                            setCreateEventId(e.target.value);
+                                            // Clear suggestions when user types manually
+                                            if (idSuggestions.length > 0) setIdSuggestions([]);
+                                            if (error) setError('');
+                                        }} 
+                                        placeholder="Unique Event ID" 
+                                        className={`w-full bg-slate-950 border rounded-xl px-4 py-2 text-sm text-white outline-none transition-colors ${error && idSuggestions.length > 0 ? 'border-rose-500 focus:border-rose-500' : 'border-slate-700 focus:border-indigo-500'}`} 
+                                        required 
+                                    />
+                                    {/* Suggestions UI */}
+                                    {idSuggestions.length > 0 && (
+                                        <div className="mt-3 animate-fadeIn">
+                                            <p className="text-[10px] text-rose-400 font-bold mb-2">ID Unavailable. Try these:</p>
+                                            <div className="flex flex-wrap gap-2">
+                                                {idSuggestions.map(s => (
+                                                    <button
+                                                        key={s}
+                                                        type="button"
+                                                        onClick={() => applySuggestion(s)}
+                                                        className="px-2 py-1 bg-slate-800 hover:bg-indigo-600 text-indigo-300 hover:text-white rounded-lg text-[10px] font-mono transition-colors border border-slate-700"
+                                                    >
+                                                        {s}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
                                 <input type="password" value={createEventPass} onChange={e => setCreateEventPass(e.target.value)} placeholder="Set Judge Password" className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:border-indigo-500 outline-none" required />
                                 <button disabled={actionLoading} type="submit" className="w-full py-3 bg-indigo-600 rounded-xl font-black uppercase tracking-widest text-xs hover:bg-indigo-500 disabled:opacity-50">Create & Launch</button>
                             </form>
@@ -377,7 +469,9 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
                     </div>
                 </section>
                 
-                {error && <div className="fixed bottom-6 right-6 bg-rose-600 text-white px-6 py-4 rounded-xl shadow-2xl animate-slideUp font-bold">{error}</div>}
+                {/* Global Toasts */}
+                {error && <div className="fixed bottom-6 right-6 bg-rose-600 text-white px-6 py-4 rounded-xl shadow-2xl animate-slideUp font-bold z-50">{error}</div>}
+                {successMsg && <div className="fixed bottom-6 right-6 bg-emerald-600 text-white px-6 py-4 rounded-xl shadow-2xl animate-slideUp font-bold z-50">{successMsg}</div>}
 
             </div>
         )}
