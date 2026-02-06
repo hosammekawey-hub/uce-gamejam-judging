@@ -85,7 +85,7 @@ export const SyncService = {
     return !error;
   },
 
-  // --- FETCH LISTS (Now using Proper Columns) ---
+  // --- FETCH LISTS ---
 
   async getEventsForOrganizer(userId: string) {
       const { data, error } = await supabase
@@ -103,7 +103,6 @@ export const SyncService = {
   },
 
   async getEventsForJudge(userId: string) {
-      // 1. Get Event IDs where user is a judge
       const { data: judges, error: judgeError } = await supabase
         .from('judges')
         .select('event_id')
@@ -113,7 +112,6 @@ export const SyncService = {
       
       const eventIds = judges.map(j => j.event_id);
 
-      // 2. Fetch those events
       const { data: events, error: eventError } = await supabase
         .from('events')
         .select('*')
@@ -124,7 +122,6 @@ export const SyncService = {
   },
 
   async getEventsForContestant(userId: string) {
-      // 1. Get Event IDs where user is a contestant
       const { data: contestants, error: conError } = await supabase
         .from('contestants')
         .select('event_id')
@@ -134,7 +131,6 @@ export const SyncService = {
 
       const eventIds = contestants.map(c => c.event_id);
 
-      // 2. Fetch events
       const { data: events, error: eventError } = await supabase
         .from('events')
         .select('*')
@@ -148,6 +144,32 @@ export const SyncService = {
   async checkEventExists(id: string): Promise<boolean> {
       const { count } = await supabase.from('events').select('*', { count: 'exact', head: true }).eq('id', id);
       return (count || 0) > 0;
+  },
+
+  async verifyOrganizerPassword(eventId: string, password: string): Promise<{ success: boolean; config?: CompetitionConfig }> {
+      const { data, error } = await supabase.from('events').select('*').eq('id', eventId).single();
+      
+      if (error || !data) return { success: false };
+      
+      if (data.organizer_pass === password) {
+           const config: CompetitionConfig = {
+              competitionId: data.id,
+              title: data.title,
+              typeDescription: data.description || '',
+              organizerPass: data.organizer_pass,
+              judgePass: data.judge_pass,
+              rubric: data.rubric || [],
+              tieBreakers: data.tie_breakers || [],
+              isSetupComplete: true,
+              organizerId: data.organizer_id,
+              visibility: data.visibility || 'public',
+              viewPass: data.view_pass || '',
+              registration: data.registration || 'closed'
+           };
+           return { success: true, config };
+      }
+      
+      return { success: false };
   },
 
   async createEvent(config: CompetitionConfig, userId?: string): Promise<{ success: boolean, message: string }> {
@@ -179,7 +201,8 @@ export const SyncService = {
       if (config.typeDescription) payload.description = config.typeDescription;
       if (config.visibility) payload.visibility = config.visibility;
       if (config.registration) payload.registration = config.registration;
-      if (config.viewPass) payload.view_pass = config.viewPass;
+      if (config.viewPass !== undefined) payload.view_pass = config.viewPass;
+      if (config.organizerPass !== undefined) payload.organizer_pass = config.organizerPass; // Added this!
       
       if (config.rubric) payload.rubric = config.rubric; 
       if (config.tieBreakers) payload.tie_breakers = config.tieBreakers;

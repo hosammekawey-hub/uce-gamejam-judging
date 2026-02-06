@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Contestant, Rating, Judge, UserRole, Criterion } from '../types';
+import { Contestant, Rating, Judge, UserRole, Criterion, CompetitionConfig } from '../types';
 
 interface DashboardProps {
   title: string;
@@ -13,7 +13,9 @@ interface DashboardProps {
   onSelectTeam: (team: Contestant) => void;
   tieBreakers?: { title: string; question: string }[];
   onUpdateConfig?: (rubric: Criterion[], tieBreakers: { title: string; question: string }[]) => void;
+  onUpdateSettings?: (settings: Partial<CompetitionConfig>) => void;
   canEditRubric?: boolean;
+  eventSettings?: { visibility: 'public' | 'private'; registration: 'open' | 'closed'; viewPass?: string; organizerPass?: string };
 }
 
 const Dashboard: React.FC<DashboardProps> = ({ 
@@ -27,14 +29,23 @@ const Dashboard: React.FC<DashboardProps> = ({
   onSelectTeam, 
   tieBreakers,
   onUpdateConfig,
-  canEditRubric
+  onUpdateSettings,
+  canEditRubric,
+  eventSettings
 }) => {
   const [showRubric, setShowRubric] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   
   // Local state for editing
   const [tempRubric, setTempRubric] = useState<Criterion[]>([]);
   const [tempTieBreakers, setTempTieBreakers] = useState<{ title: string; question: string }[]>([]);
+
+  // Local state for settings
+  const [tempVisibility, setTempVisibility] = useState<'public' | 'private'>('public');
+  const [tempRegistration, setTempRegistration] = useState<'open' | 'closed'>('closed');
+  const [tempViewPass, setTempViewPass] = useState('');
+  const [tempOrgPass, setTempOrgPass] = useState('');
 
   useEffect(() => {
     if (showRubric) {
@@ -44,8 +55,16 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
   }, [showRubric, rubric, tieBreakers]);
 
+  useEffect(() => {
+      if (showSettings && eventSettings) {
+          setTempVisibility(eventSettings.visibility);
+          setTempRegistration(eventSettings.registration);
+          setTempViewPass(eventSettings.viewPass || '');
+          setTempOrgPass(eventSettings.organizerPass || '');
+      }
+  }, [showSettings, eventSettings]);
+
   const handleSave = () => {
-    // Basic validation
     const totalWeight = tempRubric.reduce((acc, c) => acc + c.weight, 0);
     if (Math.abs(totalWeight - 1.0) > 0.05) {
         alert(`Total weight must equal 100%. Current: ${(totalWeight * 100).toFixed(0)}%`);
@@ -56,6 +75,18 @@ const Dashboard: React.FC<DashboardProps> = ({
         onUpdateConfig(tempRubric, tempTieBreakers);
     }
     setIsEditing(false);
+  };
+
+  const handleSaveSettings = () => {
+      if (onUpdateSettings) {
+          onUpdateSettings({
+              visibility: tempVisibility,
+              registration: tempRegistration,
+              viewPass: tempViewPass,
+              organizerPass: tempOrgPass
+          });
+      }
+      setShowSettings(false);
   };
 
   const handleRubricChange = (idx: number, field: keyof Criterion, value: any) => {
@@ -98,15 +129,25 @@ const Dashboard: React.FC<DashboardProps> = ({
               : `Judging Portal: Reviewing ${teams.length} entries.`}
           </p>
         </div>
-        <button 
-          onClick={() => setShowRubric(true)}
-          className="flex items-center gap-4 px-10 py-5 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase tracking-[0.25em] hover:bg-indigo-600 transition-all shadow-xl active:scale-95"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-            <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clipRule="evenodd" />
-          </svg>
-          Judging Criteria
-        </button>
+        <div className="flex gap-4">
+            {currentRole === 'organizer' && (
+                <button 
+                onClick={() => setShowSettings(true)}
+                className="flex items-center gap-3 px-8 py-5 bg-white border border-slate-200 text-slate-500 rounded-2xl font-black text-xs uppercase tracking-[0.25em] hover:bg-slate-50 transition-all shadow-xl active:scale-95"
+                >
+                    Settings
+                </button>
+            )}
+            <button 
+            onClick={() => setShowRubric(true)}
+            className="flex items-center gap-4 px-10 py-5 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase tracking-[0.25em] hover:bg-indigo-600 transition-all shadow-xl active:scale-95"
+            >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clipRule="evenodd" />
+            </svg>
+            Judging Criteria
+            </button>
+        </div>
       </div>
 
       {/* Status Bar */}
@@ -225,6 +266,92 @@ const Dashboard: React.FC<DashboardProps> = ({
         </div>
         )}
       </div>
+
+      {/* Settings Modal */}
+      {showSettings && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-8 bg-slate-900/80 backdrop-blur-md animate-fadeIn">
+              <div className="bg-white border border-slate-200 w-full max-w-2xl rounded-[3rem] shadow-[0_50px_100px_rgba(0,0,0,0.3)] overflow-hidden">
+                  <div className="px-10 py-8 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
+                    <div>
+                        <h2 className="text-2xl font-black text-slate-900">Event Settings</h2>
+                        <p className="text-slate-500 text-xs font-bold mt-1">Control access and visibility.</p>
+                    </div>
+                    <button onClick={() => setShowSettings(false)} className="w-10 h-10 bg-white rounded-full flex items-center justify-center text-slate-400 hover:text-rose-500 shadow-md">✕</button>
+                  </div>
+                  <div className="p-10 space-y-8">
+                       <div className="space-y-4">
+                           <h3 className="font-black text-sm uppercase tracking-wider text-slate-900">Registration Status</h3>
+                           <div className="flex gap-2">
+                               <button 
+                                onClick={() => setTempRegistration('open')} 
+                                className={`flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-widest border transition-all ${tempRegistration === 'open' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-400 border-slate-200 hover:bg-slate-50'}`}
+                               >
+                                   Open
+                               </button>
+                               <button 
+                                onClick={() => setTempRegistration('closed')} 
+                                className={`flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-widest border transition-all ${tempRegistration === 'closed' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-400 border-slate-200 hover:bg-slate-50'}`}
+                               >
+                                   Closed
+                               </button>
+                           </div>
+                           <p className="text-[10px] text-slate-400">If closed, only you (the organizer) can add new entries.</p>
+                       </div>
+
+                       <div className="space-y-4">
+                           <h3 className="font-black text-sm uppercase tracking-wider text-slate-900">Visibility</h3>
+                           <div className="flex gap-2">
+                               <button 
+                                onClick={() => setTempVisibility('public')} 
+                                className={`flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-widest border transition-all ${tempVisibility === 'public' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-400 border-slate-200 hover:bg-slate-50'}`}
+                               >
+                                   Public
+                               </button>
+                               <button 
+                                onClick={() => setTempVisibility('private')} 
+                                className={`flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-widest border transition-all ${tempVisibility === 'private' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-400 border-slate-200 hover:bg-slate-50'}`}
+                               >
+                                   Private
+                               </button>
+                           </div>
+                           {tempVisibility === 'private' && (
+                               <div className="animate-slideUp">
+                                   <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 block">View Password</label>
+                                   <input 
+                                     value={tempViewPass}
+                                     onChange={e => setTempViewPass(e.target.value)}
+                                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold"
+                                     placeholder="Set access key"
+                                   />
+                               </div>
+                           )}
+                       </div>
+
+                       <div className="space-y-4 pt-4 border-t border-slate-100">
+                           <h3 className="font-black text-sm uppercase tracking-wider text-slate-900">Organizer Access</h3>
+                           <div>
+                               <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 block">Guest Organizer Password</label>
+                               <input 
+                                 type="text"
+                                 value={tempOrgPass}
+                                 onChange={e => setTempOrgPass(e.target.value)}
+                                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold font-mono text-slate-900"
+                                 placeholder="Set password"
+                               />
+                               <p className="text-[10px] text-slate-400 mt-2">Required for managing this event without a Google Account.</p>
+                           </div>
+                       </div>
+
+                       <button 
+                        onClick={handleSaveSettings}
+                        className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase tracking-[0.2em] hover:bg-indigo-600 shadow-xl"
+                       >
+                           Save Changes
+                       </button>
+                  </div>
+              </div>
+          </div>
+      )}
 
       {/* Rubric Modal */}
       {showRubric && (

@@ -151,9 +151,10 @@ const App: React.FC = () => {
                         title: payload.new.title,
                         rubric: criteria,
                         tieBreakers: payload.new.tie_breakers,
-                        visibility: rawRubric.visibility || 'public',
-                        viewPass: rawRubric.viewPass || '',
-                        registration: rawRubric.registration || 'closed'
+                        visibility: payload.new.visibility || 'public',
+                        viewPass: payload.new.view_pass || '',
+                        registration: payload.new.registration || 'closed',
+                        organizerPass: payload.new.organizer_pass
                     }));
                 }
             }
@@ -189,12 +190,14 @@ const App: React.FC = () => {
       setConfig(prev => ({ ...prev, rubric: newRubric, tieBreakers: newTieBreakers }));
       await SyncService.updateEventConfig(competitionId!, { 
           rubric: newRubric, 
-          tieBreakers: newTieBreakers,
-          visibility: config.visibility,
-          viewPass: config.viewPass,
-          registration: config.registration
+          tieBreakers: newTieBreakers
       });
   };
+
+  const handleUpdateSettings = async (settings: Partial<CompetitionConfig>) => {
+      setConfig(prev => ({ ...prev, ...settings }));
+      await SyncService.updateEventConfig(competitionId!, settings);
+  }
 
   const saveRating = async (rating: Rating) => {
     if (currentRole !== 'judge') return;
@@ -363,7 +366,14 @@ const App: React.FC = () => {
             onSelectTeam={(team) => { setSelectedContestant(team); setView('rating'); }}
             tieBreakers={config.tieBreakers}
             onUpdateConfig={handleUpdateConfig}
+            onUpdateSettings={handleUpdateSettings}
             canEditRubric={currentRole === 'organizer'}
+            eventSettings={{ 
+                visibility: config.visibility, 
+                registration: config.registration, 
+                viewPass: config.viewPass,
+                organizerPass: config.organizerPass
+            }}
           />
         )}
         {view === 'rating' && selectedContestant && (

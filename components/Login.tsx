@@ -30,17 +30,21 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
   const [joinJudgeSecret, setJoinJudgeSecret] = useState('');
   
   const [createEventId, setCreateEventId] = useState('');
-  const [createEventPass, setCreateEventPass] = useState('');
+  const [createEventPass, setCreateEventPass] = useState(''); // This is Judge Password
+  const [createOrgPass, setCreateOrgPass] = useState(''); // New: Organizer Password
   const [idSuggestions, setIdSuggestions] = useState<string[]>([]);
   
   const [joinContestantId, setJoinContestantId] = useState('');
   const [joinTeamName, setJoinTeamName] = useState(''); 
   const [joinTeamDesc, setJoinTeamDesc] = useState('');
 
+  // Guest Organizer State
+  const [guestOrgId, setGuestOrgId] = useState('');
+  const [guestOrgPass, setGuestOrgPass] = useState('');
+
   // Realtime subscription ref
   const dashboardSubRef = useRef<RealtimeChannel | null>(null);
 
-  // Use ID to track changes instead of object reference to prevent loops
   useEffect(() => {
     if (initialUser?.id) {
         refreshUserEvents(initialUser.id);
@@ -64,18 +68,13 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
 
   const setupRealtimeSubscription = (userId: string) => {
       if (dashboardSubRef.current) dashboardSubRef.current.unsubscribe();
-
-      // Subscribe to changes affecting this user
       dashboardSubRef.current = SyncService.subscribeToUserDashboard(userId, () => {
-          // On any relevant change (new event organized, new judge entry, new contestant entry), refresh lists
           refreshUserEvents(userId);
       });
   };
 
   const refreshUserEvents = async (userId: string) => {
-      // Don't set full loading on background refreshes if we already have data
       if (myEvents.length === 0 && judgingEvents.length === 0) setLoading(true);
-      
       try {
           const [org, jud, con] = await Promise.all([
               SyncService.getEventsForOrganizer(userId),
@@ -106,6 +105,31 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
       setError('');
   };
 
+  const handleGuestOrganizerLogin = async (e: React.FormEvent) => {
+      e.preventDefault();
+      setActionLoading(true);
+      setError('');
+      try {
+          const res = await SyncService.verifyOrganizerPassword(guestOrgId.trim().toLowerCase(), guestOrgPass);
+          if (res.success && res.config) {
+              setSuccessMsg('Guest login successful!');
+              // We create a dummy "Guest" user profile for the session context
+              const guestUser: UserProfile = {
+                  id: 'guest_organizer', 
+                  email: 'guest@judgepro.app', 
+                  full_name: 'Guest Organizer',
+                  avatar_url: '' 
+              };
+              onEnterEvent('organizer', guestOrgId.trim(), res.config, guestUser);
+          } else {
+              setError('Invalid Event ID or Organizer Password.');
+          }
+      } catch (err) {
+          setError('Login failed. Please check connection.');
+      }
+      setActionLoading(false);
+  };
+
   const handleCreateEvent = async (e: React.FormEvent) => {
       e.preventDefault();
       if (!initialUser) return;
@@ -121,19 +145,21 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
           return;
       }
 
+      if (!createOrgPass || createOrgPass.length < 4) {
+          setError('Organizer Password must be at least 4 characters.');
+          setActionLoading(false);
+          return;
+      }
+
       try {
           const exists = await SyncService.checkEventExists(cleanId);
-          
           if (exists) {
               setError(`Event ID '${cleanId}' is unavailable.`);
-              
               const year = new Date().getFullYear();
               const candidates = new Set([
                   `${cleanId}-${year}`,
                   `${cleanId}${Math.floor(Math.random() * 900) + 100}`,
-                  `${cleanId}-event`,
-                  `the-${cleanId}`,
-                  `${cleanId}${Math.floor(Math.random() * 9000) + 1000}`
+                  `${cleanId}-event`
               ]);
 
               const checks = await Promise.all(
@@ -153,7 +179,6 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
               } else {
                  setIdSuggestions([`${cleanId}-${Date.now().toString().slice(-6)}`]);
               }
-              
               setActionLoading(false);
               return;
           }
@@ -162,7 +187,7 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
               competitionId: cleanId,
               title: cleanId.toUpperCase(),
               typeDescription: 'Custom Event',
-              organizerPass: 'auto-generated',
+              organizerPass: createOrgPass, // Set explicitly by user
               judgePass: createEventPass,
               rubric: COMPETITION_TEMPLATES[0].rubric,
               tieBreakers: [],
@@ -175,10 +200,10 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
           const res = await SyncService.createEvent(newConfig, initialUser.id);
           
           if (res.success) {
-              // Refresh handled by subscription usually, but manual refresh ensures speed
               await refreshUserEvents(initialUser.id);
               setCreateEventId('');
               setCreateEventPass('');
+              setCreateOrgPass('');
               setSuccessMsg(`Event '${cleanId}' created successfully!`);
               setTimeout(() => setSuccessMsg(''), 5000);
               onEnterEvent('organizer', cleanId, newConfig, initialUser);
@@ -186,7 +211,6 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
               setError(`Failed to create event: ${res.message}`);
           }
       } catch (err: any) {
-          console.error("Create event exception:", err);
           setError(`An unexpected error occurred: ${err.message || 'Unknown error'}`);
       }
       setActionLoading(false);
@@ -247,19 +271,14 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
       const id = viewEventId.trim().toLowerCase();
       try {
           const meta = await SyncService.getEventMetadata(id);
-          
           if (!meta) {
               setError('Event not found.');
               return;
           }
-
-          if (meta.visibility === 'private') {
-              if (meta.viewPass !== viewPass) {
-                  setError('Private Event: Invalid View Key.');
-                  return;
-              }
+          if (meta.visibility === 'private' && meta.viewPass !== viewPass) {
+              setError('Private Event: Invalid View Key.');
+              return;
           }
-
           onEnterEvent('viewer', id, meta, initialUser || undefined);
       } catch (err) {
           setError('Could not fetch event.');
@@ -331,28 +350,59 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
             )}
         </div>
 
-        {/* Public View Section */}
+        {/* Public / Guest Section */}
         {!initialUser && (
-            <div className="bg-gradient-to-br from-indigo-900/50 to-slate-900 border border-white/10 rounded-[2.5rem] p-12 text-center space-y-8 animate-slideUp">
-                <h2 className="text-3xl font-black text-white">Public Viewer Access</h2>
-                <p className="text-indigo-200">Watch competitions live. If event is private, enter the access key.</p>
-                <form onSubmit={handleViewPublic} className="max-w-lg mx-auto flex flex-col gap-4">
-                    <input 
-                        value={viewEventId} 
-                        onChange={e => setViewEventId(e.target.value)} 
-                        placeholder="Enter Event ID" 
-                        className="w-full bg-slate-950/50 border border-white/20 rounded-xl px-6 py-4 text-white focus:border-indigo-500 outline-none" 
-                    />
-                    <div className="flex gap-4">
-                        <input 
-                            value={viewPass} 
-                            onChange={e => setViewPass(e.target.value)} 
-                            placeholder="Access Key (Optional)" 
-                            className="flex-1 bg-slate-950/50 border border-white/20 rounded-xl px-6 py-4 text-white focus:border-indigo-500 outline-none" 
-                        />
-                        <button type="submit" className="px-8 py-4 bg-indigo-600 rounded-xl font-black uppercase tracking-widest hover:bg-indigo-500">View</button>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 animate-slideUp">
+                {/* 1. Public Viewer */}
+                <div className="bg-gradient-to-br from-indigo-900/50 to-slate-900 border border-white/10 rounded-[2.5rem] p-10 space-y-6">
+                    <div>
+                        <h2 className="text-2xl font-black text-white">Public Viewer</h2>
+                        <p className="text-indigo-200 text-sm">Watch competitions live.</p>
                     </div>
-                </form>
+                    <form onSubmit={handleViewPublic} className="flex flex-col gap-3">
+                        <input 
+                            value={viewEventId} 
+                            onChange={e => setViewEventId(e.target.value)} 
+                            placeholder="Enter Event ID" 
+                            className="w-full bg-slate-950/50 border border-white/20 rounded-xl px-5 py-3 text-white focus:border-indigo-500 outline-none" 
+                        />
+                        <div className="flex gap-3">
+                            <input 
+                                value={viewPass} 
+                                onChange={e => setViewPass(e.target.value)} 
+                                placeholder="Access Key (Optional)" 
+                                className="flex-1 bg-slate-950/50 border border-white/20 rounded-xl px-5 py-3 text-white focus:border-indigo-500 outline-none" 
+                            />
+                            <button type="submit" className="px-6 py-3 bg-indigo-600 rounded-xl font-black uppercase tracking-widest hover:bg-indigo-500">View</button>
+                        </div>
+                    </form>
+                </div>
+
+                {/* 2. Guest Organizer Login */}
+                <div className="bg-slate-900 border border-white/10 rounded-[2.5rem] p-10 space-y-6">
+                    <div>
+                        <h2 className="text-2xl font-black text-white">Guest Organizer</h2>
+                        <p className="text-slate-400 text-sm">Login with Event ID & Password.</p>
+                    </div>
+                    <form onSubmit={handleGuestOrganizerLogin} className="flex flex-col gap-3">
+                        <input 
+                            value={guestOrgId} 
+                            onChange={e => setGuestOrgId(e.target.value)} 
+                            placeholder="Event ID" 
+                            className="w-full bg-slate-950/50 border border-slate-700 rounded-xl px-5 py-3 text-white focus:border-slate-500 outline-none" 
+                        />
+                        <input 
+                            type="password"
+                            value={guestOrgPass} 
+                            onChange={e => setGuestOrgPass(e.target.value)} 
+                            placeholder="Organizer Password" 
+                            className="w-full bg-slate-950/50 border border-slate-700 rounded-xl px-5 py-3 text-white focus:border-slate-500 outline-none" 
+                        />
+                        <button disabled={actionLoading} type="submit" className="w-full py-3 bg-slate-800 rounded-xl font-black uppercase tracking-widest text-xs hover:bg-slate-700 disabled:opacity-50">
+                            Access Dashboard
+                        </button>
+                    </form>
+                </div>
             </div>
         )}
 
@@ -405,7 +455,11 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
                                         </div>
                                     )}
                                 </div>
-                                <input type="password" value={createEventPass} onChange={e => setCreateEventPass(e.target.value)} placeholder="Set Judge Password" className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:border-indigo-500 outline-none" required />
+                                <div className="grid grid-cols-2 gap-3">
+                                    <input type="password" value={createEventPass} onChange={e => setCreateEventPass(e.target.value)} placeholder="Judge Key" className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:border-indigo-500 outline-none" required />
+                                    <input type="password" value={createOrgPass} onChange={e => setCreateOrgPass(e.target.value)} placeholder="Org Key" className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:border-indigo-500 outline-none" required />
+                                </div>
+                                <p className="text-[9px] text-slate-500 font-bold">Org Key is required for guest access later.</p>
                                 <button disabled={actionLoading} type="submit" className="w-full py-3 bg-indigo-600 rounded-xl font-black uppercase tracking-widest text-xs hover:bg-indigo-500 disabled:opacity-50">Create & Launch</button>
                             </form>
                         </div>
