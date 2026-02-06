@@ -14,7 +14,7 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState('');
-  const [successMsg, setSuccessMsg] = useState(''); // New success feedback
+  const [successMsg, setSuccessMsg] = useState('');
 
   // Lists for authenticated user
   const [myEvents, setMyEvents] = useState<any[]>([]);
@@ -30,7 +30,7 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
   
   const [createEventId, setCreateEventId] = useState('');
   const [createEventPass, setCreateEventPass] = useState('');
-  const [idSuggestions, setIdSuggestions] = useState<string[]>([]); // New state for suggestions
+  const [idSuggestions, setIdSuggestions] = useState<string[]>([]);
   
   const [joinContestantId, setJoinContestantId] = useState('');
   const [joinTeamName, setJoinTeamName] = useState(''); 
@@ -38,54 +38,77 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
 
   // Initial Load and Auth Subscription
   useEffect(() => {
-    // 1. Check current state immediately
-    checkUser();
+    let isMounted = true;
 
-    // 2. Subscribe to Auth Changes (Handles Google Redirects)
+    // 1. Check current state immediately
+    checkUser().then(() => {
+        if (isMounted && loading) setLoading(false);
+    });
+
+    // 2. Subscribe to Auth Changes
     const { data: { subscription } } = SyncService.onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-         if (session?.user) {
-             const u: UserProfile = {
-                 id: session.user.id,
-                 email: session.user.email!,
-                 full_name: session.user.user_metadata.full_name || session.user.email?.split('@')[0] || 'User',
-                 avatar_url: session.user.user_metadata.avatar_url
-             };
-             setUser(u);
-             await refreshUserEvents(u.id);
-         }
-      } else if (event === 'SIGNED_OUT') {
-          setUser(null);
-          setMyEvents([]);
-          setJudgingEvents([]);
-          setParticipatingEvents([]);
+      try {
+          if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+             if (session?.user) {
+                 const u: UserProfile = {
+                     id: session.user.id,
+                     email: session.user.email!,
+                     full_name: session.user.user_metadata.full_name || session.user.email?.split('@')[0] || 'User',
+                     avatar_url: session.user.user_metadata.avatar_url
+                 };
+                 if (isMounted) {
+                     setUser(u);
+                     await refreshUserEvents(u.id);
+                 }
+             }
+          } else if (event === 'SIGNED_OUT') {
+              if (isMounted) {
+                  setUser(null);
+                  setMyEvents([]);
+                  setJudgingEvents([]);
+                  setParticipatingEvents([]);
+              }
+          }
+      } catch (err) {
+          console.error("Auth change error:", err);
+      } finally {
+          if (isMounted) setLoading(false);
       }
-      setLoading(false);
     });
 
     return () => {
+      isMounted = false;
       subscription.unsubscribe();
     };
   }, []);
 
   const checkUser = async () => {
-    const u = await SyncService.getCurrentUser();
-    setUser(u);
-    if (u) {
-        await refreshUserEvents(u.id);
+    try {
+        const u = await SyncService.getCurrentUser();
+        setUser(u);
+        if (u) {
+            await refreshUserEvents(u.id);
+        }
+    } catch (e) {
+        console.error("Check user failed", e);
+    } finally {
+        setLoading(false);
     }
-    setLoading(false);
   };
 
   const refreshUserEvents = async (userId: string) => {
-      const [org, jud, con] = await Promise.all([
-          SyncService.getEventsForOrganizer(userId),
-          SyncService.getEventsForJudge(userId),
-          SyncService.getEventsForContestant(userId)
-      ]);
-      setMyEvents(org);
-      setJudgingEvents(jud);
-      setParticipatingEvents(con);
+      try {
+          const [org, jud, con] = await Promise.all([
+              SyncService.getEventsForOrganizer(userId),
+              SyncService.getEventsForJudge(userId),
+              SyncService.getEventsForContestant(userId)
+          ]);
+          setMyEvents(org);
+          setJudgingEvents(jud);
+          setParticipatingEvents(con);
+      } catch (err) {
+          console.error("Failed to refresh events", err);
+      }
   };
 
   const handleGoogleLogin = async () => {
@@ -95,7 +118,6 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
 
   const handleLogout = async () => {
       await SyncService.signOut();
-      // State is handled by onAuthStateChange listener
   };
 
   // Helper to apply a suggestion
@@ -120,71 +142,74 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
           return;
       }
 
-      const exists = await SyncService.checkEventExists(cleanId);
-      
-      if (exists) {
-          setError(`Event ID '${cleanId}' is unavailable.`);
+      try {
+          const exists = await SyncService.checkEventExists(cleanId);
           
-          // Generate candidates
-          const year = new Date().getFullYear();
-          const candidates = new Set([
-              `${cleanId}-${year}`,
-              `${cleanId}${Math.floor(Math.random() * 900) + 100}`,
-              `${cleanId}-event`,
-              `the-${cleanId}`,
-              `${cleanId}${Math.floor(Math.random() * 9000) + 1000}`
-          ]);
+          if (exists) {
+              setError(`Event ID '${cleanId}' is unavailable.`);
+              
+              // Generate candidates
+              const year = new Date().getFullYear();
+              const candidates = new Set([
+                  `${cleanId}-${year}`,
+                  `${cleanId}${Math.floor(Math.random() * 900) + 100}`,
+                  `${cleanId}-event`,
+                  `the-${cleanId}`,
+                  `${cleanId}${Math.floor(Math.random() * 9000) + 1000}`
+              ]);
 
-          // Verify uniqueness of candidates
-          const checks = await Promise.all(
-              Array.from(candidates).map(async (id) => {
-                  const isTaken = await SyncService.checkEventExists(id);
-                  return { id, available: !isTaken };
-              })
-          );
+              // Verify uniqueness of candidates
+              const checks = await Promise.all(
+                  Array.from(candidates).map(async (id) => {
+                      const isTaken = await SyncService.checkEventExists(id);
+                      return { id, available: !isTaken };
+                  })
+              );
 
-          const validSuggestions = checks
-              .filter(c => c.available)
-              .map(c => c.id)
-              .slice(0, 3);
+              const validSuggestions = checks
+                  .filter(c => c.available)
+                  .map(c => c.id)
+                  .slice(0, 3);
 
-          if (validSuggestions.length > 0) {
-            setIdSuggestions(validSuggestions);
-          } else {
-             // Fallback if all taken (rare)
-             setIdSuggestions([`${cleanId}-${Date.now().toString().slice(-6)}`]);
+              if (validSuggestions.length > 0) {
+                setIdSuggestions(validSuggestions);
+              } else {
+                 setIdSuggestions([`${cleanId}-${Date.now().toString().slice(-6)}`]);
+              }
+              
+              setActionLoading(false);
+              return;
           }
-          
-          setActionLoading(false);
-          return;
-      }
 
-      // Default Config
-      const newConfig: CompetitionConfig = {
-          competitionId: cleanId,
-          title: cleanId.toUpperCase(),
-          typeDescription: 'Custom Event',
-          organizerPass: 'auto-generated',
-          judgePass: createEventPass,
-          rubric: COMPETITION_TEMPLATES[0].rubric,
-          tieBreakers: [],
-          isSetupComplete: false,
-          organizerId: user.id,
-          visibility: 'public', // Default
-          registration: 'closed' // Default
-      };
+          // Default Config
+          const newConfig: CompetitionConfig = {
+              competitionId: cleanId,
+              title: cleanId.toUpperCase(),
+              typeDescription: 'Custom Event',
+              organizerPass: 'auto-generated',
+              judgePass: createEventPass,
+              rubric: COMPETITION_TEMPLATES[0].rubric,
+              tieBreakers: [],
+              isSetupComplete: false,
+              organizerId: user.id,
+              visibility: 'public', // Default
+              registration: 'closed' // Default
+          };
 
-      const success = await SyncService.createEvent(newConfig, user.id);
-      if (success) {
-          await refreshUserEvents(user.id);
-          // Don't auto-enter, let them see it created or decide
-          setCreateEventId('');
-          setCreateEventPass('');
-          setSuccessMsg(`Event '${cleanId}' created successfully!`);
-          setTimeout(() => setSuccessMsg(''), 5000);
-          onEnterEvent('organizer', cleanId, newConfig, user);
-      } else {
-          setError('Failed to create event. Database error.');
+          const success = await SyncService.createEvent(newConfig, user.id);
+          if (success) {
+              await refreshUserEvents(user.id);
+              setCreateEventId('');
+              setCreateEventPass('');
+              setSuccessMsg(`Event '${cleanId}' created successfully!`);
+              setTimeout(() => setSuccessMsg(''), 5000);
+              onEnterEvent('organizer', cleanId, newConfig, user);
+          } else {
+              setError('Failed to create event. Database error.');
+          }
+      } catch (err) {
+          console.error(err);
+          setError('An unexpected error occurred.');
       }
       setActionLoading(false);
   };
@@ -194,15 +219,19 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
       if (!user) return;
       setActionLoading(true);
       setError('');
-      const res = await SyncService.joinEventAsJudge(joinJudgeId.trim(), user, joinJudgeSecret);
-      if (res.success) {
-          await refreshUserEvents(user.id);
-          setJoinJudgeId('');
-          setJoinJudgeSecret('');
-          setSuccessMsg('Joined successfully as a Judge!');
-          setTimeout(() => setSuccessMsg(''), 3000);
-      } else {
-          setError(res.message);
+      try {
+          const res = await SyncService.joinEventAsJudge(joinJudgeId.trim(), user, joinJudgeSecret);
+          if (res.success) {
+              await refreshUserEvents(user.id);
+              setJoinJudgeId('');
+              setJoinJudgeSecret('');
+              setSuccessMsg('Joined successfully as a Judge!');
+              setTimeout(() => setSuccessMsg(''), 3000);
+          } else {
+              setError(res.message);
+          }
+      } catch (err) {
+          setError('Connection failed.');
       }
       setActionLoading(false);
   };
@@ -212,22 +241,25 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
       if (!user) return;
       setActionLoading(true);
       setError('');
-      
-      const res = await SyncService.joinEventAsContestant(joinContestantId.trim(), user, {
-          title: joinTeamName,
-          description: joinTeamDesc,
-          thumbnail: ''
-      });
+      try {
+          const res = await SyncService.joinEventAsContestant(joinContestantId.trim(), user, {
+              title: joinTeamName,
+              description: joinTeamDesc,
+              thumbnail: ''
+          });
 
-      if (res.success) {
-          await refreshUserEvents(user.id);
-          setJoinContestantId('');
-          setJoinTeamName('');
-          setJoinTeamDesc('');
-          setSuccessMsg('Entry registered successfully!');
-          setTimeout(() => setSuccessMsg(''), 3000);
-      } else {
-          setError(res.message);
+          if (res.success) {
+              await refreshUserEvents(user.id);
+              setJoinContestantId('');
+              setJoinTeamName('');
+              setJoinTeamDesc('');
+              setSuccessMsg('Entry registered successfully!');
+              setTimeout(() => setSuccessMsg(''), 3000);
+          } else {
+              setError(res.message);
+          }
+      } catch (err) {
+          setError('Connection failed.');
       }
       setActionLoading(false);
   };
@@ -235,28 +267,36 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
   const handleViewPublic = async (e: React.FormEvent) => {
       e.preventDefault();
       const id = viewEventId.trim().toLowerCase();
-      const meta = await SyncService.getEventMetadata(id);
-      
-      if (!meta) {
-          setError('Event not found.');
-          return;
-      }
-
-      // Privacy Check
-      if (meta.visibility === 'private') {
-          if (meta.viewPass !== viewPass) {
-              setError('Private Event: Invalid View Key.');
+      try {
+          const meta = await SyncService.getEventMetadata(id);
+          
+          if (!meta) {
+              setError('Event not found.');
               return;
           }
-      }
 
-      onEnterEvent('viewer', id, meta, user || undefined);
+          // Privacy Check
+          if (meta.visibility === 'private') {
+              if (meta.viewPass !== viewPass) {
+                  setError('Private Event: Invalid View Key.');
+                  return;
+              }
+          }
+
+          onEnterEvent('viewer', id, meta, user || undefined);
+      } catch (err) {
+          setError('Could not fetch event.');
+      }
   };
 
   const handleEnterContext = async (role: UserRole, eventId: string) => {
-      const meta = await SyncService.getEventMetadata(eventId);
-      if (meta) {
-          onEnterEvent(role, eventId, meta, user || undefined);
+      try {
+          const meta = await SyncService.getEventMetadata(eventId);
+          if (meta) {
+              onEnterEvent(role, eventId, meta, user || undefined);
+          }
+      } catch (err) {
+          console.error(err);
       }
   };
 
@@ -276,7 +316,12 @@ const UserPortal: React.FC<PortalProps> = ({ onEnterEvent, onAdminLogin }) => {
       }
   };
 
-  if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-white">Loading Portal...</div>;
+  if (loading) return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-white space-y-4">
+          <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+          <p className="font-bold tracking-widest uppercase text-xs animate-pulse">Loading Portal...</p>
+      </div>
+  );
 
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-12 text-slate-100 font-sans selection:bg-indigo-500/30">
