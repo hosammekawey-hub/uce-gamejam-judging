@@ -226,7 +226,6 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
               setCreateEventPass('');
               setCreateOrgPass('');
               setSuccessMsg(`Event '${cleanId}' created successfully!`);
-              setTimeout(() => setSuccessMsg(''), 5000);
               onEnterEvent('organizer', cleanId, newConfig, initialUser);
           } else {
               setError(`Failed to create event: ${res.message}`);
@@ -302,31 +301,12 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
   const handleViewPublic = async (e: React.FormEvent) => {
       e.preventDefault();
       const id = viewEventId.trim().toLowerCase();
-      try {
-          const meta = await SyncService.getEventMetadata(id);
-          if (!meta) {
-              setError('Event not found.');
-              return;
-          }
-          if (meta.visibility === 'private' && meta.viewPass !== viewPass) {
-              setError('Private Event: Invalid View Key.');
-              return;
-          }
-          onEnterEvent('viewer', id, meta, initialUser || undefined);
-      } catch (err) {
-          setError('Could not fetch event.');
-      }
+      // Simple navigation trigger, the Router/Provider will handle fetching
+      onEnterEvent('viewer', id, undefined, initialUser || undefined);
   };
 
   const handleEnterContext = async (role: UserRole, eventId: string) => {
-      try {
-          const meta = await SyncService.getEventMetadata(eventId);
-          if (meta) {
-              onEnterEvent(role, eventId, meta, initialUser || undefined);
-          }
-      } catch (err) {
-          console.error(err);
-      }
+      onEnterEvent(role, eventId, undefined, initialUser || undefined);
   };
 
   const handleWithdraw = async (eventId: string) => {
@@ -399,15 +379,7 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
                             placeholder="Enter Event ID" 
                             className="w-full bg-slate-950/50 border border-white/20 rounded-xl px-5 py-3 text-white focus:border-indigo-500 outline-none" 
                         />
-                        <div className="flex gap-3">
-                            <input 
-                                value={viewPass} 
-                                onChange={e => setViewPass(e.target.value)} 
-                                placeholder="Access Key (Optional)" 
-                                className="flex-1 bg-slate-950/50 border border-white/20 rounded-xl px-5 py-3 text-white focus:border-indigo-500 outline-none" 
-                            />
-                            <button type="submit" className="px-6 py-3 bg-indigo-600 rounded-xl font-black uppercase tracking-widest hover:bg-indigo-500">View</button>
-                        </div>
+                        <button type="submit" className="px-6 py-3 bg-indigo-600 rounded-xl font-black uppercase tracking-widest hover:bg-indigo-500">View</button>
                     </form>
                 </div>
 
@@ -593,4 +565,3 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
 };
 
 export default UserPortal;
-    
