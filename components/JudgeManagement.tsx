@@ -1,14 +1,15 @@
 
 import React, { useState } from 'react';
-import { Judge, Contestant } from '../types';
+import { Judge, Contestant, Rating } from '../types';
 
 interface JudgeManagementProps {
   judges: Judge[];
   teams: Contestant[];
+  ratings?: Rating[]; // Added to calculate status correctly
   onRemoveJudge: (judgeId: string) => void;
 }
 
-const JudgeManagement: React.FC<JudgeManagementProps> = ({ judges, teams, onRemoveJudge }) => {
+const JudgeManagement: React.FC<JudgeManagementProps> = ({ judges, teams, ratings, onRemoveJudge }) => {
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
 
   const handleAttemptDelete = (id: string) => {
@@ -19,6 +20,15 @@ const JudgeManagement: React.FC<JudgeManagementProps> = ({ judges, teams, onRemo
       setConfirmingDeleteId(id);
       setTimeout(() => setConfirmingDeleteId(prev => prev === id ? null : prev), 3000);
     }
+  };
+
+  const calculateStatus = (judgeId: string): { label: string, color: 'slate' | 'amber' | 'green', percent: number } => {
+      if (!ratings || teams.length === 0) return { label: 'Joined', color: 'slate', percent: 0 };
+      
+      const count = ratings.filter(r => r.judgeId === judgeId).length;
+      if (count === 0) return { label: 'Joined', color: 'slate', percent: 0 };
+      if (count >= teams.length) return { label: 'Completed', color: 'green', percent: 100 };
+      return { label: 'In Progress', color: 'amber', percent: Math.round((count / teams.length) * 100) };
   };
 
   return (
@@ -43,9 +53,8 @@ const JudgeManagement: React.FC<JudgeManagementProps> = ({ judges, teams, onRemo
           </div>
         ) : (
           judges.map(judge => {
-            // Calculate progress for UI
-            // Note: The 'status' field in Judge type is derived in App.tsx based on count
-            const isDone = judge.status === 'completed';
+            const status = calculateStatus(judge.id);
+            const isDone = status.color === 'green';
             
             return (
               <div key={judge.id} className="bg-white border border-slate-200 p-8 rounded-[2.5rem] shadow-xl shadow-slate-200/50 hover:border-indigo-200 transition-all group relative overflow-hidden">
@@ -71,22 +80,22 @@ const JudgeManagement: React.FC<JudgeManagementProps> = ({ judges, teams, onRemo
                   <div className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border ${
                     isDone 
                       ? 'bg-green-50 text-green-600 border-green-200' 
-                      : judge.status === 'in-progress'
+                      : status.color === 'amber'
                         ? 'bg-amber-50 text-amber-600 border-amber-200'
                         : 'bg-slate-50 text-slate-400 border-slate-200'
                   }`}>
-                    {judge.status}
+                    {status.label}
                   </div>
                 </div>
 
                 <div className="space-y-2">
                   <div className="flex justify-between text-[10px] font-black uppercase tracking-widest text-slate-400">
-                    <span>Progress</span>
+                    <span>Progress: {status.percent}%</span>
                   </div>
                   <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
                     <div 
                       className={`h-full rounded-full ${isDone ? 'bg-green-500' : 'bg-indigo-600'}`} 
-                      style={{ width: isDone ? '100%' : judge.status === 'in-progress' ? '50%' : '5%' }} 
+                      style={{ width: `${Math.max(5, status.percent)}%` }} 
                     />
                   </div>
                 </div>

@@ -15,6 +15,7 @@ interface DashboardProps {
   tieBreakers?: { title: string; question: string }[];
   onUpdateConfig?: (rubric: Criterion[], tieBreakers: { title: string; question: string }[]) => void;
   onUpdateSettings?: (settings: Partial<CompetitionConfig>) => void;
+  onDeleteEvent?: () => void;
   canEditRubric?: boolean;
   eventSettings?: { visibility: 'public' | 'private'; registration: 'open' | 'closed'; viewPass?: string; organizerPass?: string; judgePass?: string };
 }
@@ -32,6 +33,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   tieBreakers,
   onUpdateConfig,
   onUpdateSettings,
+  onDeleteEvent,
   canEditRubric,
   eventSettings
 }) => {
@@ -126,6 +128,15 @@ const Dashboard: React.FC<DashboardProps> = ({
     return ratings.some(r => r.teamId === teamId && r.judgeId === currentJudge);
   };
 
+  const calculateJudgeStatus = (judgeId: string): { label: string, color: 'slate' | 'amber' | 'green', percent: number } => {
+      if (teams.length === 0) return { label: 'Joined', color: 'slate', percent: 0 };
+      
+      const count = ratings.filter(r => r.judgeId === judgeId).length;
+      if (count === 0) return { label: 'Joined', color: 'slate', percent: 0 };
+      if (count >= teams.length) return { label: 'Completed', color: 'green', percent: 100 };
+      return { label: 'In Progress', color: 'amber', percent: Math.round((count / teams.length) * 100) };
+  };
+
   const progress = teams.length > 0 
     ? Math.round((ratings.filter(r => r.judgeId === currentJudge).length / teams.length) * 100)
     : 0;
@@ -200,21 +211,27 @@ const Dashboard: React.FC<DashboardProps> = ({
           <div className="flex-1 flex items-start justify-start overflow-y-auto max-h-[150px]">
             {otherJudges.length > 0 ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full">
-                {otherJudges.map(judge => (
-                  <div key={judge.id} className="flex items-center gap-5 bg-slate-50 border border-slate-100 px-6 py-4 rounded-3xl group hover:bg-white hover:border-indigo-200 hover:shadow-lg transition-all">
-                    <div className={`w-3 h-3 rounded-full ring-4 ${
-                      judge.status === 'completed' ? 'bg-green-500 ring-green-100' : 
-                      judge.status === 'in-progress' ? 'bg-amber-400 ring-amber-100 animate-pulse' : 'bg-slate-300 ring-slate-100'
-                    }`} />
-                    <div>
-                      <p className="text-sm font-black text-slate-900 leading-none">{judge.name}</p>
-                      <p className={`text-[9px] font-black uppercase mt-1 tracking-widest ${
-                         judge.status === 'completed' ? 'text-green-600' : 
-                         judge.status === 'in-progress' ? 'text-amber-600' : 'text-slate-400'
-                      }`}>{judge.status.replace('-', ' ')}</p>
+                {otherJudges.map(judge => {
+                  const status = calculateJudgeStatus(judge.id);
+                  return (
+                    <div key={judge.id} className="flex items-center gap-5 bg-slate-50 border border-slate-100 px-6 py-4 rounded-3xl group hover:bg-white hover:border-indigo-200 hover:shadow-lg transition-all">
+                      <div className={`w-3 h-3 rounded-full ring-4 ${
+                        status.color === 'green' ? 'bg-green-500 ring-green-100' : 
+                        status.color === 'amber' ? 'bg-amber-400 ring-amber-100 animate-pulse' : 'bg-slate-300 ring-slate-100'
+                      }`} />
+                      <div className="flex-1">
+                        <div className="flex justify-between items-center">
+                            <p className="text-sm font-black text-slate-900 leading-none">{judge.name}</p>
+                            <span className="text-[9px] font-black text-slate-300">{status.percent}%</span>
+                        </div>
+                        <p className={`text-[9px] font-black uppercase mt-1 tracking-widest ${
+                           status.color === 'green' ? 'text-green-600' : 
+                           status.color === 'amber' ? 'text-amber-600' : 'text-slate-400'
+                        }`}>{status.label}</p>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <div className="text-center py-4 w-full h-full flex items-center justify-center">
@@ -398,12 +415,26 @@ const Dashboard: React.FC<DashboardProps> = ({
                            </div>
                        </div>
 
-                       <button 
-                        onClick={handleSaveSettings}
-                        className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase tracking-[0.2em] hover:bg-indigo-600 shadow-xl"
-                       >
-                           Save Changes
-                       </button>
+                       <div className="pt-4 space-y-4">
+                           <button 
+                            onClick={handleSaveSettings}
+                            className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase tracking-[0.2em] hover:bg-indigo-600 shadow-xl"
+                           >
+                               Save Changes
+                           </button>
+
+                           {onDeleteEvent && (
+                               <div className="pt-6 border-t border-slate-100">
+                                   <h3 className="font-black text-sm uppercase tracking-wider text-rose-600 mb-2">Danger Zone</h3>
+                                   <button 
+                                    onClick={onDeleteEvent}
+                                    className="w-full py-4 bg-rose-50 text-rose-600 border border-rose-100 rounded-2xl font-black text-xs uppercase tracking-[0.2em] hover:bg-rose-600 hover:text-white transition-all"
+                                   >
+                                       Delete Event Permanently
+                                   </button>
+                               </div>
+                           )}
+                       </div>
                   </div>
               </div>
           </div>

@@ -208,6 +208,23 @@ const App: React.FC = () => {
       setContestants([]);
       setRatings([]);
       setKnownJudges([]);
+      setView('dashboard'); // Reset view state
+  };
+
+  const handleDeleteEvent = async () => {
+      if (!competitionId) return;
+      if (window.confirm("CRITICAL WARNING: This will permanently delete the event, all ratings, and all data. This cannot be undone.\n\nAre you absolutely sure?")) {
+          // Double confirmation
+          if (window.confirm("Confirm deletion one last time. This action is irreversible.")) {
+              const success = await SyncService.deleteEvent(competitionId);
+              if (success) {
+                  alert("Event deleted successfully.");
+                  handleExitEvent();
+              } else {
+                  alert("Failed to delete event. Please try again.");
+              }
+          }
+      }
   };
 
   const handleUpdateConfig = async (newRubric: Criterion[], newTieBreakers: { title: string; question: string }[]) => {
@@ -406,6 +423,7 @@ const App: React.FC = () => {
             tieBreakers={config.tieBreakers}
             onUpdateConfig={handleUpdateConfig}
             onUpdateSettings={handleUpdateSettings}
+            onDeleteEvent={currentRole === 'organizer' ? handleDeleteEvent : undefined}
             canEditRubric={currentRole === 'organizer'}
             eventSettings={{ 
                 visibility: config.visibility, 
@@ -440,7 +458,12 @@ const App: React.FC = () => {
           />
         )}
         {view === 'judges' && currentRole === 'organizer' && (
-          <JudgeManagement judges={knownJudges} teams={contestants} onRemoveJudge={handleRemoveJudge} />
+          <JudgeManagement 
+            judges={knownJudges} 
+            teams={contestants} 
+            ratings={ratings}
+            onRemoveJudge={handleRemoveJudge} 
+          />
         )}
       </main>
     </div>

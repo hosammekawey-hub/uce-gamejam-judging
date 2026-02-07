@@ -243,6 +243,19 @@ export const SyncService = {
       return !error;
   },
 
+  // --- DELETION ---
+  
+  async deleteEvent(eventId: string): Promise<boolean> {
+      // Manual cascade deletion to ensure no orphaned data remains
+      // Supabase policies might allow this via cascading FKs, but being explicit is safer for the app logic
+      await supabase.from('ratings').delete().eq('event_id', eventId);
+      await supabase.from('judges').delete().eq('event_id', eventId);
+      await supabase.from('contestants').delete().eq('event_id', eventId);
+      
+      const { error } = await supabase.from('events').delete().eq('id', eventId);
+      return !error;
+  },
+
   // --- FETCHING FULL STATE (Dashboard) ---
 
   async getEventMetadata(id: string): Promise<CompetitionConfig | null> {
