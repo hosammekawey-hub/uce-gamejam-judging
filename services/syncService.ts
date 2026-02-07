@@ -106,6 +106,35 @@ export const SyncService = {
     return !error;
   },
 
+  // --- STORAGE ---
+
+  async uploadThumbnail(file: File, eventId: string): Promise<string | null> {
+      try {
+          // Create unique path: eventId/timestamp_filename
+          const fileExt = file.name.split('.').pop();
+          const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
+          const filePath = `${eventId}/${fileName}`;
+
+          const { error: uploadError } = await supabase.storage
+              .from('thumbnails')
+              .upload(filePath, file);
+
+          if (uploadError) {
+              console.error("Upload Error:", uploadError);
+              return null;
+          }
+
+          const { data } = supabase.storage
+              .from('thumbnails')
+              .getPublicUrl(filePath);
+
+          return data.publicUrl;
+      } catch (err) {
+          console.error("Storage Exception:", err);
+          return null;
+      }
+  },
+
   // --- FETCH LISTS ---
 
   async getEventsForOrganizer(userId: string) {
@@ -284,6 +313,20 @@ export const SyncService = {
           registration: data.registration || 'closed'
       };
   },
+  
+  // Use the database view for fetching initial leaderboard state (Server-Side calculation)
+  async getLeaderboardSnapshot(eventId: string) {
+      const { data, error } = await supabase
+        .from('leaderboard_view')
+        .select('*')
+        .eq('event_id', eventId);
+      
+      if (error) {
+          console.error("Leaderboard fetch error:", error);
+          return [];
+      }
+      return data;
+  },
 
   async getFullState(id: string) {
       const [teamsRes, ratingsRes, judgesRes] = await Promise.all([
@@ -386,7 +429,7 @@ export const SyncService = {
           name: c.name,
           title: c.title,
           description: c.description,
-          thumbnail: c.thumbnail
+          thumbnail: c.thumbnail // Now expects a URL from the UI, not base64
       };
       
       if (c.id && c.id.length > 10) payload.id = c.id; 

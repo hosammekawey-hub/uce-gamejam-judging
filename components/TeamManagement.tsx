@@ -1,6 +1,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { Contestant, UserRole, CompetitionConfig, Rating } from '../types';
+import { SyncService } from '../services/syncService';
 
 interface EntryManagementProps {
   teams: Contestant[];
@@ -23,8 +24,8 @@ const EntryManagement: React.FC<EntryManagementProps> = ({ teams, currentRole, o
   const existingEntry = isContestant && teams.length > 0 ? teams[0] : null;
 
   const [newTeam, setNewTeam] = useState({ name: '', title: '', desc: '' });
-  const [thumbnailBase64, setThumbnailBase64] = useState<string>('');
-  const [isProcessingImg, setIsProcessingImg] = useState(false);
+  const [thumbnailUrl, setThumbnailUrl] = useState<string>('');
+  const [isUploading, setIsUploading] = useState(false);
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const [editingTeamId, setEditingTeamId] = useState<string | null>(null);
   
@@ -38,48 +39,41 @@ const EntryManagement: React.FC<EntryManagementProps> = ({ teams, currentRole, o
               title: existingEntry.title,
               desc: existingEntry.description
           });
-          setThumbnailBase64(existingEntry.thumbnail);
+          setThumbnailUrl(existingEntry.thumbnail);
       }
   }, [existingEntry]);
-
-  const processImage = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = (event) => {
-        const img = new Image();
-        img.src = event.target?.result as string;
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          const scale = Math.min(1, 800 / img.width); // Increased resolution slightly
-          canvas.width = img.width * scale;
-          canvas.height = img.height * scale;
-          
-          const ctx = canvas.getContext('2d');
-          ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
-          resolve(canvas.toDataURL('image/jpeg', 0.8)); // slightly higher quality
-        };
-        img.onerror = reject;
-      };
-      reader.onerror = reject;
-    });
-  };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (file.size > 1024 * 1024) { // 1MB limit
-          alert("Image is too large. Max size is 1MB.");
+      if (file.size > 2 * 1024 * 1024) { // 2MB limit
+          alert("Image is too large. Max size is 2MB.");
           return;
       }
-      setIsProcessingImg(true);
+      setIsUploading(true);
       try {
-        const compressed = await processImage(file);
-        setThumbnailBase64(compressed);
+        // Assume event ID is available from context or URL? 
+        // Actually, onAddTeam handles the DB logic, but we need the EventID to organize storage.
+        // We can use a generic 'temp' folder or rely on the parent to clean it up, 
+        // but typically we'd pass the event ID. Since we don't have it as prop here, 
+        // we'll use a 'uploads' folder for now or rely on SyncService to handle structure.
+        // NOTE: SyncService.uploadThumbnail now expects eventId. 
+        // We will assume 'uploads' as a fallback if we can't get the ID easily, 
+        // OR we can parse it from existing entries if available.
+        const eventId = teams.length > 0 ? teams[0].id.split('_')[0] : 'uploads'; 
+        
+        const uploadedUrl = await SyncService.uploadThumbnail(file, eventId);
+        
+        if (uploadedUrl) {
+            setThumbnailUrl(uploadedUrl);
+        } else {
+            alert("Upload failed. Please try again.");
+        }
       } catch (err) {
-        alert("Error processing image.");
+        alert("Error uploading image.");
+        console.error(err);
       } finally {
-        setIsProcessingImg(false);
+        setIsUploading(false);
       }
     }
   };
@@ -105,13 +99,13 @@ const EntryManagement: React.FC<EntryManagementProps> = ({ teams, currentRole, o
         name: newTeam.name,
         title: newTeam.title,
         description: newTeam.desc || 'No description provided.',
-        thumbnail: thumbnailBase64
+        thumbnail: thumbnailUrl
       });
 
       if (!isContestant) {
           // Reset form after add/update
           setNewTeam({ name: '', title: '', desc: '' });
-          setThumbnailBase64('');
+          setThumbnailUrl('');
           setEditingTeamId(null);
           if (fileInputRef.current) fileInputRef.current.value = '';
       } else {
@@ -126,14 +120,14 @@ const EntryManagement: React.FC<EntryManagementProps> = ({ teams, currentRole, o
           title: team.title,
           desc: team.description
       });
-      setThumbnailBase64(team.thumbnail);
+      setThumbnailUrl(team.thumbnail);
       setEditingTeamId(team.id);
       window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleCancelEdit = () => {
       setNewTeam({ name: '', title: '', desc: '' });
-      setThumbnailBase64('');
+      setThumbnailUrl('');
       setEditingTeamId(null);
   };
 
@@ -249,17 +243,17 @@ const EntryManagement: React.FC<EntryManagementProps> = ({ teams, currentRole, o
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Thumbnail (Max 1MB)</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Thumbnail (Max 2MB)</label>
                   <div 
-                    onClick={() => !isProcessingImg && fileInputRef.current?.click()}
+                    onClick={() => !isUploading && fileInputRef.current?.click()}
                     className={`relative h-40 w-full rounded-[2rem] border-2 border-dashed transition-all cursor-pointer overflow-hidden flex flex-col items-center justify-center gap-2 ${
-                      thumbnailBase64 ? 'border-indigo-400 bg-indigo-50/30' : 'border-slate-200 bg-slate-50 hover:border-slate-300'
-                    } ${isProcessingImg ? 'opacity-50 cursor-wait' : ''}`}
+                      thumbnailUrl ? 'border-indigo-400 bg-indigo-50/30' : 'border-slate-200 bg-slate-50 hover:border-slate-300'
+                    } ${isUploading ? 'opacity-50 cursor-wait' : ''}`}
                   >
-                    {isProcessingImg ? (
-                      <span className="text-[10px] font-black uppercase tracking-widest animate-pulse">Compressing...</span>
-                    ) : thumbnailBase64 ? (
-                      <img src={thumbnailBase64} className="absolute inset-0 w-full h-full object-cover" alt="Preview" />
+                    {isUploading ? (
+                      <span className="text-[10px] font-black uppercase tracking-widest animate-pulse">Uploading...</span>
+                    ) : thumbnailUrl ? (
+                      <img src={thumbnailUrl} className="absolute inset-0 w-full h-full object-cover" alt="Preview" />
                     ) : (
                       <span className="text-xs font-bold text-slate-400">Upload banner</span>
                     )}
@@ -277,7 +271,7 @@ const EntryManagement: React.FC<EntryManagementProps> = ({ teams, currentRole, o
                 </div>
                 <button 
                   type="submit"
-                  disabled={isProcessingImg}
+                  disabled={isUploading}
                   className={`w-full py-5 text-white font-black uppercase tracking-[0.3em] rounded-2xl transition-all shadow-xl active:scale-95 text-[10px] disabled:bg-slate-300 ${editingTeamId ? 'bg-amber-600 hover:bg-amber-500' : 'bg-slate-900 hover:bg-indigo-600'}`}
                 >
                   {isContestant ? 'Update Entry' : (editingTeamId ? 'Save Changes' : 'Create Entry')}
