@@ -357,10 +357,23 @@ const App: React.FC = () => {
   }
 
   if (currentRole === 'organizer' && !config.isSetupComplete) {
-    return <CompetitionSetup onComplete={(c) => { 
-        SyncService.updateEventConfig(c.competitionId, {...c, isSetupComplete: true});
-        setConfig({...c, isSetupComplete: true});
-    }} onCancel={handleExitEvent} templates={COMPETITION_TEMPLATES} />;
+    return (
+      <CompetitionSetup 
+        onComplete={(c) => { 
+            SyncService.updateEventConfig(c.competitionId, {...c, isSetupComplete: true});
+            setConfig({...c, isSetupComplete: true});
+        }} 
+        onCancel={async () => {
+            if (window.confirm("Cancel event setup? The draft event will be deleted.")) {
+                if (competitionId && config.organizerPass) {
+                    await SyncService.deleteEvent(competitionId, config.organizerPass);
+                }
+                handleExitEvent();
+            }
+        }} 
+        templates={COMPETITION_TEMPLATES} 
+      />
+    );
   }
 
   const navItems = [
