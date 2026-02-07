@@ -262,16 +262,17 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
   const handleJoinAsContestant = async (e: React.FormEvent) => {
       e.preventDefault();
       if (!initialUser) return;
-      
+
       const eventId = joinContestantId.trim();
 
       // Validation: Check if user is already participating in this event
-      const alreadyJoined = participatingEvents.some(evt => evt.id === eventId);
+      // Using case-insensitive match for the ID to be robust
+      const alreadyJoined = participatingEvents.some(evt => evt.id.toLowerCase() === eventId.toLowerCase());
       if (alreadyJoined) {
-          setError(`You are already a contestant in event '${eventId}'. Please manage your entry from the list below.`);
+          setError(`You are already a contestant in event '${eventId}'. Please manage your entry from the 'My Submissions' list below.`);
           return;
       }
-
+      
       setActionLoading(true);
       setError('');
       try {
@@ -592,3 +593,4 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
 };
 
 export default UserPortal;
+    

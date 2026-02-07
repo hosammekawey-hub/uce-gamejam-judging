@@ -3,8 +3,24 @@ import { createClient, RealtimeChannel, AuthChangeEvent, Session } from '@supaba
 import { Rating, Contestant, CompetitionConfig, GlobalSettings, Judge, UserProfile } from '../types';
 
 // --- CONFIGURATION ---
-const SUPABASE_URL = 'https://aefegdmffmwrukeoqjbm.supabase.co'; 
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFlZmVnZG1mZm13cnVrZW9xamJtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk4OTY0OTEsImV4cCI6MjA4NTQ3MjQ5MX0.ejK09pWZJimLzpWb8OtDKh7Nc-18rDUy6aRivE_ZLwg';
+// We use a fallback to prevent the app from crashing synchronously if variables are missing.
+// Authentication calls will simply fail gracefully in the UI.
+
+// Safely access environment variables
+const getEnv = (key: string) => {
+    // Check import.meta.env (Vite standard)
+    if (typeof import.meta !== 'undefined' && import.meta.env) {
+        return import.meta.env[key];
+    }
+    return undefined;
+};
+
+const SUPABASE_URL = getEnv('VITE_SUPABASE_URL') || 'https://placeholder.supabase.co';
+const SUPABASE_KEY = getEnv('VITE_SUPABASE_KEY') || 'placeholder';
+
+if (SUPABASE_URL === 'https://placeholder.supabase.co') {
+    console.warn("⚠️ JudgePro: Supabase credentials missing. App running in offline/demo mode.");
+}
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
     auth: { 
@@ -68,7 +84,8 @@ export const SyncService = {
               avatar_url: user.user_metadata.avatar_url
           };
       } catch (err) {
-          console.error("getCurrentUser failed:", err);
+          // If in placeholder mode, this will fail, which is expected.
+          console.debug("getCurrentUser check failed (expected if offline/no-credentials).");
           return null;
       }
   },

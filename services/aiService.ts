@@ -1,9 +1,10 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
 import { Criterion } from "../types";
 
 export const AIService = {
-  async generateRubric(description: string, apiKey: string): Promise<Criterion[]> {
+  async generateRubric(description: string): Promise<Criterion[]> {
+    // API key must be obtained exclusively from process.env.API_KEY
+    const apiKey = process.env.API_KEY;
     if (!apiKey) {
       throw new Error("API Key is missing");
     }

@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { CompetitionConfig, Criterion, CompetitionTemplate } from '../types';
 import { AIService } from '../services/aiService';
@@ -15,7 +14,6 @@ const CompetitionSetup: React.FC<CompetitionSetupProps> = ({ onComplete, onCance
   const [title, setTitle] = useState('My Competition 2026');
   const [description, setDescription] = useState(''); 
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
-  const [userApiKey, setUserApiKey] = useState('');
   const [mode, setMode] = useState<'template' | 'ai'>('template');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -34,15 +32,13 @@ const CompetitionSetup: React.FC<CompetitionSetupProps> = ({ onComplete, onCance
         setError('Please enter a description of your event.');
         return;
     }
-    if (!userApiKey) {
-        setError('Google API Key is required for AI generation.');
-        return;
-    }
+    
+    // API Key is handled by process.env.API_KEY in AIService
 
     setIsLoading(true);
     setError('');
     try {
-      const generated = await AIService.generateRubric(description, userApiKey);
+      const generated = await AIService.generateRubric(description);
       if (generated && generated.length > 0) {
         setRubric(generated);
         setTieBreakers([]); 
@@ -169,24 +165,9 @@ const CompetitionSetup: React.FC<CompetitionSetupProps> = ({ onComplete, onCance
                     />
                 </div>
                 
-                <div className="space-y-3">
-                    <div className="flex justify-between">
-                        <label className="text-xs font-black uppercase tracking-widest text-indigo-400">Google Gemini API Key</label>
-                        <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="text-[10px] text-slate-500 hover:text-white underline decoration-dotted">Get Key Here</a>
-                    </div>
-                    <input 
-                    type="password"
-                    value={userApiKey}
-                    onChange={e => setUserApiKey(e.target.value)}
-                    className="w-full bg-slate-800 border border-slate-700 rounded-2xl px-6 py-4 text-white font-mono text-sm focus:ring-2 focus:ring-indigo-500"
-                    placeholder="AIzaSy..."
-                    autoComplete="off"
-                    />
-                </div>
-
                 <button 
                   onClick={handleGenerateAI}
-                  disabled={isLoading || !description || !userApiKey}
+                  disabled={isLoading || !description}
                   className="w-full py-4 bg-gradient-to-r from-indigo-500 to-violet-500 rounded-2xl text-white font-black uppercase tracking-[0.2em] text-xs hover:opacity-90 disabled:opacity-50 shadow-lg shadow-indigo-500/20"
                 >
                   {isLoading ? 'Designing Rubric...' : 'Generate Rubric'}
