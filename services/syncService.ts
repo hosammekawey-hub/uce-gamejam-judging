@@ -245,15 +245,21 @@ export const SyncService = {
 
   // --- DELETION ---
   
-  async deleteEvent(eventId: string): Promise<boolean> {
-      // Manual cascade deletion to ensure no orphaned data remains
-      // Supabase policies might allow this via cascading FKs, but being explicit is safer for the app logic
-      await supabase.from('ratings').delete().eq('event_id', eventId);
-      await supabase.from('judges').delete().eq('event_id', eventId);
-      await supabase.from('contestants').delete().eq('event_id', eventId);
-      
-      const { error } = await supabase.from('events').delete().eq('id', eventId);
-      return !error;
+  async deleteEvent(eventId: string, secret?: string): Promise<boolean> {
+      // Use the Secure RPC function for atomic deletion
+      // Supports both Auth ID check AND Secret Passphrase check
+      const { data, error } = await supabase.rpc('delete_competition', {
+          p_event_id: eventId,
+          p_secret: secret || null
+      });
+
+      if (error) {
+          console.error("Delete Event RPC Failed:", error);
+          return false;
+      }
+
+      // RPC returns boolean (true if successful)
+      return data === true;
   },
 
   // --- FETCHING FULL STATE (Dashboard) ---

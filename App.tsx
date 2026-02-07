@@ -216,7 +216,8 @@ const App: React.FC = () => {
       if (window.confirm("CRITICAL WARNING: This will permanently delete the event, all ratings, and all data. This cannot be undone.\n\nAre you absolutely sure?")) {
           // Double confirmation
           if (window.confirm("Confirm deletion one last time. This action is irreversible.")) {
-              const success = await SyncService.deleteEvent(competitionId);
+              // Pass the organizer pass if available (allows guest deletion)
+              const success = await SyncService.deleteEvent(competitionId, config.organizerPass);
               if (success) {
                   alert("Event deleted successfully.");
                   handleExitEvent();
