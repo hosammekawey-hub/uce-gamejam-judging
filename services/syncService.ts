@@ -327,6 +327,16 @@ export const SyncService = {
       return { success: true, message: 'Event created' };
   },
 
+  async transferEventOwnershipByEmail(eventId: string, email: string): Promise<{ success: boolean; message?: string, new_id?: string }> {
+      const { data, error } = await supabase.rpc('transfer_event_ownership', {
+          p_event_id: eventId,
+          p_new_email: email.trim().toLowerCase()
+      });
+      
+      if (error) return { success: false, message: error.message };
+      return data;
+  },
+
   async updateEventConfig(id: string, config: Partial<CompetitionConfig>): Promise<boolean> {
       const payload: any = { updated_at: new Date().toISOString() };
       

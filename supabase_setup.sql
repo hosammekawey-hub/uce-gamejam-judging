@@ -154,3 +154,24 @@ BEGIN
   
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- 8. RPC: TRANSFER EVENT OWNERSHIP (New)
+-- Allows SysAdmin to set organizer by email (looks up UUID internally)
+CREATE OR REPLACE FUNCTION public.transfer_event_ownership(p_event_id TEXT, p_new_email TEXT)
+RETURNS JSON AS $$
+DECLARE
+  v_user_id UUID;
+BEGIN
+  -- 1. Find the User ID for the email from auth.users
+  SELECT id INTO v_user_id FROM auth.users WHERE email = p_new_email;
+
+  IF v_user_id IS NULL THEN
+    RETURN json_build_object('success', false, 'message', 'User not found. Ensure they have signed in at least once.');
+  END IF;
+
+  -- 2. Update the event
+  UPDATE public.events SET organizer_id = v_user_id WHERE id = p_event_id;
+
+  RETURN json_build_object('success', true, 'new_id', v_user_id);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
