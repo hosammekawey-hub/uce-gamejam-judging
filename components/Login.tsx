@@ -1,9 +1,11 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { UserRole, CompetitionConfig, UserProfile } from '../types';
 import { SyncService } from '../services/syncService';
 import { COMPETITION_TEMPLATES } from '../constants';
 import { RealtimeChannel } from '@supabase/supabase-js';
 import { CreateEventSchema } from '../utils/validation';
+import { CardSkeleton } from './Skeletons';
 
 interface PortalProps {
   initialUser: UserProfile | null;
@@ -426,9 +428,11 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
                         <button onClick={() => refreshUserEvents(initialUser.id)} className="ml-auto text-[10px] font-black uppercase tracking-widest text-slate-500 hover:text-white">Refresh</button>
                     </div>
                     {loading && myEvents.length === 0 ? (
-                         <div className="h-40 flex items-center justify-center border-2 border-dashed border-slate-800 rounded-[2rem]">
-                             <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
-                         </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            <CardSkeleton />
+                            <CardSkeleton />
+                            <CardSkeleton />
+                        </div>
                     ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                         <div className="bg-slate-900 border-2 border-dashed border-slate-700 p-8 rounded-[2rem] flex flex-col justify-center space-y-4 hover:border-indigo-500 transition-colors">

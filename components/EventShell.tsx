@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useEvent } from '../contexts/EventContext';
 import { useAuth } from '../contexts/AuthContext';
+import { DashboardSkeleton } from './Skeletons';
 
 const EventShell: React.FC = () => {
   const { config, userRole, isOffline, isLoading, checkGatekeeper } = useEvent();
@@ -41,14 +42,7 @@ const EventShell: React.FC = () => {
   };
 
   if (isLoading || isCheckingAccess) {
-      return (
-        <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-white space-y-4">
-            <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
-            <p className="font-bold tracking-widest uppercase text-xs animate-pulse">
-                {isLoading ? 'Loading Event...' : 'Verifying Access...'}
-            </p>
-        </div>
-      );
+      return <DashboardSkeleton />;
   }
 
   if (isLocked) {

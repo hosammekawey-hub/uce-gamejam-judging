@@ -317,11 +317,25 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const upsertRating = async (r: Rating) => {
       if (!eventId) return;
+      
+      // OPTIMISTIC UPDATE: Snapshot previous state
+      const previousRatings = [...ratings];
+      
       setRatings(prev => {
           const others = prev.filter(old => !(old.teamId === r.teamId && old.judgeId === r.judgeId));
           return [...others, r];
       });
-      await SyncService.upsertRating(eventId, r);
+
+      try {
+          // Fire request (don't block UI if not awaited, but here we await to catch error in context)
+          const { error } = await SyncService.upsertRating(eventId, r);
+          if (error) throw error;
+      } catch (err) {
+          console.error("Failed to save rating:", err);
+          // ROLLBACK on error
+          setRatings(previousRatings);
+          alert("Failed to save rating. Changes reverted. Check connection.");
+      }
   };
 
   // Memoized checkGatekeeper to prevent infinite loops in dependencies
