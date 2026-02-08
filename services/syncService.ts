@@ -1,3 +1,4 @@
+
 import { createClient, RealtimeChannel, AuthChangeEvent, Session } from '@supabase/supabase-js';
 import { Rating, Contestant, CompetitionConfig, GlobalSettings, Judge, UserProfile } from '../types';
 
@@ -136,6 +137,20 @@ export const SyncService = {
   },
 
   // --- FETCH LISTS ---
+
+  async getAllEventsAdmin() {
+      // ADMIN ONLY: Fetch basic info for all events to display in the inspector
+      const { data, error } = await supabase
+        .from('events')
+        .select('id, title, organizer_id, created_at, description')
+        .order('created_at', { ascending: false });
+      
+      if (error) {
+          console.error("Admin Fetch Error:", error);
+          return [];
+      }
+      return data;
+  },
 
   async getEventsForOrganizer(userId: string) {
       // Use SAFE_EVENT_COLUMNS instead of '*'

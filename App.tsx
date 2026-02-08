@@ -16,6 +16,7 @@ import JudgeManagement from './components/JudgeManagement';
 import CompetitionSetup from './components/CompetitionSetup';
 import AdminPanel from './components/AdminPanel';
 import EventShell from './components/EventShell';
+import { AdminGuard } from './components/AdminGuard';
 
 // --- WRAPPERS FOR COMPONENTS TO CONSUME CONTEXT ---
 
@@ -201,7 +202,20 @@ const App: React.FC = () => {
             <AuthProvider>
                 <Routes>
                     <Route path="/" element={<PortalWrapper />} />
-                    <Route path="/admin" element={<AdminPanel initialSettings={{judgePass:'', organizerPass:'', templates:COMPETITION_TEMPLATES}} onUpdateSettings={() => {}} onLogout={() => {}} />} />
+                    
+                    {/* Protected Admin Route */}
+                    <Route 
+                        path="/admin" 
+                        element={
+                            <AdminGuard>
+                                <AdminPanel 
+                                    initialSettings={{judgePass:'', organizerPass:'', templates:COMPETITION_TEMPLATES}} 
+                                    onUpdateSettings={() => {}} 
+                                    onLogout={() => { sessionStorage.removeItem('admin_token'); window.location.href = '/'; }} 
+                                />
+                            </AdminGuard>
+                        } 
+                    />
                     
                     <Route path="/event/:eventId" element={<EventProvider><EventShell /></EventProvider>}>
                         <Route index element={<DashboardWrapper />} />
