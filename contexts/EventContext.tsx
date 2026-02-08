@@ -1,7 +1,7 @@
 
-import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
+import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { CompetitionConfig, Contestant, Rating, Judge, UserRole, Criterion, GlobalSettings } from '../types';
+import { CompetitionConfig, Contestant, Rating, Judge, UserRole, Criterion, GlobalSettings, UserProfile } from '../types';
 import { SyncService } from '../services/syncService';
 import { DEFAULT_CONFIG } from '../constants';
 import { useAuth } from './AuthContext';
@@ -35,6 +35,51 @@ interface EventContextType {
 
 const EventContext = createContext<EventContextType | undefined>(undefined);
 
+// Helper to determine role
+const calculateUserRole = (
+    user: UserProfile | null, 
+    config: CompetitionConfig, 
+    judges: Judge[], 
+    contestants: Contestant[], 
+    eventId: string, 
+    preferredRole?: UserRole
+): UserRole => {
+    const sessionKey = `role_${eventId}`;
+    const storedRole = sessionStorage.getItem(sessionKey) as UserRole | null;
+    
+    const capabilities: UserRole[] = [];
+
+    // Is Organizer?
+    const isOrgAuth = user && config.organizerId && user.id === config.organizerId;
+    const isOrgGuest = !!sessionStorage.getItem(`org_${eventId}`);
+    if (isOrgAuth || isOrgGuest) capabilities.push('organizer');
+
+    // Is Judge?
+    const isJudge = user && judges.some(j => j.userId === user.id);
+    if (isJudge) capabilities.push('judge');
+
+    // Is Contestant?
+    const isContestant = user && contestants.some(c => c.userId === user.id);
+    if (isContestant) capabilities.push('contestant');
+
+    capabilities.push('viewer');
+
+    let finalRole: UserRole = 'viewer';
+
+    if (preferredRole && capabilities.includes(preferredRole)) {
+        finalRole = preferredRole;
+    } else if (storedRole && capabilities.includes(storedRole)) {
+        finalRole = storedRole;
+    } else {
+        if (capabilities.includes('organizer')) finalRole = 'organizer';
+        else if (capabilities.includes('judge')) finalRole = 'judge';
+        else if (capabilities.includes('contestant')) finalRole = 'contestant';
+        else finalRole = 'viewer';
+    }
+    
+    return finalRole;
+};
+
 export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { eventId } = useParams<{ eventId: string }>();
   const { user } = useAuth();
@@ -65,22 +110,31 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         // 1. Get Metadata first
         const meta = await SyncService.getEventMetadata(eventId);
         if (!meta) {
-            // Handle 404
             console.error("Event not found");
             setIsLoading(false);
             return;
         }
 
-        if (isMounted) {
-            setConfig(meta);
-        }
-
         // 2. Get Full State
         const data = await SyncService.getFullState(eventId);
+        
         if (isMounted) {
+            setConfig(meta);
             setContestants(data.teams);
             setRatings(data.ratings);
             setJudges(data.judges);
+            
+            // Calculate initial role immediately with current data
+            const role = calculateUserRole(
+                user, 
+                meta, 
+                data.judges, 
+                data.teams, 
+                eventId, 
+                location.state?.preferredRole
+            );
+            setUserRole(role);
+            
             setIsOffline(false);
             setIsLoading(false);
         }
@@ -89,8 +143,11 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         if (subscriptionRef.current) subscriptionRef.current.unsubscribe();
         subscriptionRef.current = SyncService.subscribeToEvent(eventId, {
             onTeamsChange: (payload) => {
+                // Simplified refresh for robust syncing, normally we'd do granular updates
+                // For simplicity in this fix, we just refetch critical parts or apply delta.
+                // Applying delta as before:
                 if (payload.eventType === 'INSERT') {
-                    const newTeam: Contestant = {
+                     const newTeam = {
                         id: payload.new.id,
                         userId: payload.new.user_id,
                         name: payload.new.name,
@@ -102,15 +159,7 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 } else if (payload.eventType === 'DELETE') {
                     setContestants(prev => prev.filter(t => t.id !== payload.old.id));
                 } else if (payload.eventType === 'UPDATE') {
-                    const updatedTeam: Contestant = {
-                        id: payload.new.id,
-                        userId: payload.new.user_id,
-                        name: payload.new.name,
-                        title: payload.new.title,
-                        description: payload.new.description,
-                        thumbnail: payload.new.thumbnail
-                    };
-                    setContestants(prev => prev.map(t => t.id === updatedTeam.id ? updatedTeam : t));
+                    setContestants(prev => prev.map(t => t.id === payload.new.id ? { ...t, ...payload.new, userId: payload.new.user_id } : t));
                 }
             },
             onRatingsChange: (payload) => {
@@ -133,7 +182,7 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 }
             },
             onJudgesChange: (payload) => {
-                if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+                 if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
                      const newJudge = { id: payload.new.user_id || payload.new.name, name: payload.new.name, userId: payload.new.user_id, status: payload.new.status } as Judge;
                      setJudges(prev => {
                          const others = prev.filter(j => j.id !== newJudge.id);
@@ -144,7 +193,7 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 }
             },
             onConfigChange: (payload) => {
-                if (payload.eventType === 'UPDATE') {
+                 if (payload.eventType === 'UPDATE') {
                     const rawRubric = payload.new.rubric || {};
                     const criteria = Array.isArray(rawRubric) ? rawRubric : (rawRubric.criteria || []);
                     setConfig(prev => ({
@@ -167,65 +216,27 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         isMounted = false;
         if (subscriptionRef.current) subscriptionRef.current.unsubscribe();
     };
-  }, [eventId]);
+  }, [eventId]); // Run once per eventId change. user dependency handled below.
 
-  // Determine Role Logic - Robust Implementation
+  // Reactive Role Update (When user auth loads/changes later)
   useEffect(() => {
-    // Wait for data to load so we know who is a judge/contestant
-    if (isLoading) return;
-
-    const navStateRole = location.state?.preferredRole as UserRole | undefined;
-    const sessionKey = `role_${eventId}`;
-    const storedRole = sessionStorage.getItem(sessionKey) as UserRole | null;
-
-    // 1. Determine all valid capabilities for this user
-    const capabilities: UserRole[] = [];
-
-    // Is Organizer? (Auth ID check or Guest Pass check)
-    const isOrgAuth = user && config.organizerId && user.id === config.organizerId;
-    const isOrgGuest = !!sessionStorage.getItem(`org_${eventId}`);
-    if (isOrgAuth || isOrgGuest) capabilities.push('organizer');
-
-    // Is Judge?
-    // User must be in judges list. 
-    // Edge Case: Guest Organizer can also act as Judge if they added themselves to the judge list (linking by name/id)
-    // For now, strict check on userId for authenticated users.
-    const isJudge = user && judges.some(j => j.userId === user.id);
-    if (isJudge) capabilities.push('judge');
-
-    // Is Contestant?
-    const isContestant = user && contestants.some(c => c.userId === user.id);
-    if (isContestant) capabilities.push('contestant');
-
-    capabilities.push('viewer'); // Everyone is at least a viewer
-
-    // 2. Select Role based on Priority
-    let finalRole: UserRole = 'viewer';
-
-    // Priority A: Navigation State (Explicit User Intent from Portal)
-    if (navStateRole && capabilities.includes(navStateRole)) {
-        finalRole = navStateRole;
-    } 
-    // Priority B: Session Storage (Persisted Intent across reloads/nav)
-    else if (storedRole && capabilities.includes(storedRole)) {
-        finalRole = storedRole;
-    }
-    // Priority C: Default Hierarchy
-    else {
-        if (capabilities.includes('organizer')) finalRole = 'organizer';
-        else if (capabilities.includes('judge')) finalRole = 'judge';
-        else if (capabilities.includes('contestant')) finalRole = 'contestant';
-        else finalRole = 'viewer';
-    }
-
-    // 3. Update State & Persistence
-    setUserRole(finalRole);
-    if (finalRole !== storedRole) {
-        sessionStorage.setItem(sessionKey, finalRole);
-    }
-
-  }, [user, config.organizerId, judges, contestants, eventId, location.state, isLoading]);
-
+      if (isLoading || !eventId) return;
+      
+      const role = calculateUserRole(
+        user, 
+        config, 
+        judges, 
+        contestants, 
+        eventId, 
+        location.state?.preferredRole
+      );
+      
+      if (role !== userRole) {
+          setUserRole(role);
+          const sessionKey = `role_${eventId}`;
+          sessionStorage.setItem(sessionKey, role);
+      }
+  }, [user, config, judges, contestants, eventId, location.state, userRole, isLoading]);
 
   // Actions
   const updateConfig = async (rubric: Criterion[], tieBreakers: any[]) => {
@@ -245,7 +256,7 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const storedOrgPass = sessionStorage.getItem(`org_${eventId}`);
       const success = await SyncService.deleteEvent(eventId, storedOrgPass || undefined);
       if (success) {
-          sessionStorage.removeItem(`role_${eventId}`); // Cleanup
+          sessionStorage.removeItem(`role_${eventId}`); 
           navigate('/');
       }
   };
@@ -290,15 +301,17 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       await SyncService.upsertRating(eventId, r);
   };
 
-  const checkGatekeeper = async (pass?: string): Promise<boolean> => {
+  // Memoized checkGatekeeper to prevent infinite loops in dependencies
+  const checkGatekeeper = useCallback(async (pass?: string): Promise<boolean> => {
       if (config.visibility === 'public') return true;
       if (config.visibility === 'private') {
           if (config.viewPass === pass) return true;
+          // Implicit access check
           if (userRole !== 'viewer') return true;
           return false;
       }
       return true;
-  };
+  }, [config.visibility, config.viewPass, userRole]);
 
   return (
     <EventContext.Provider value={{

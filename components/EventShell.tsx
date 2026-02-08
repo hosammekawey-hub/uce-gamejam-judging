@@ -12,15 +12,23 @@ const EventShell: React.FC = () => {
 
   const [gatePass, setGatePass] = useState('');
   const [isLocked, setIsLocked] = useState(false);
+  const [isCheckingAccess, setIsCheckingAccess] = useState(true);
 
-  // Check visibility on load
+  // Check visibility reactively
   React.useEffect(() => {
-    if (!isLoading && config.visibility === 'private') {
+    if (isLoading) return;
+
+    if (config.visibility === 'private') {
+        // We re-check gatekeeper whenever dependencies (like userRole) change
         checkGatekeeper().then(allowed => {
-            if (!allowed) setIsLocked(true);
+            setIsLocked(!allowed);
+            setIsCheckingAccess(false);
         });
+    } else {
+        setIsLocked(false);
+        setIsCheckingAccess(false);
     }
-  }, [isLoading, config, checkGatekeeper]);
+  }, [isLoading, config, checkGatekeeper, userRole]);
 
   const handleGateUnlock = async (e: React.FormEvent) => {
       e.preventDefault();
@@ -32,11 +40,13 @@ const EventShell: React.FC = () => {
       }
   };
 
-  if (isLoading) {
+  if (isLoading || isCheckingAccess) {
       return (
         <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-white space-y-4">
             <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
-            <p className="font-bold tracking-widest uppercase text-xs animate-pulse">Loading Event...</p>
+            <p className="font-bold tracking-widest uppercase text-xs animate-pulse">
+                {isLoading ? 'Loading Event...' : 'Verifying Access...'}
+            </p>
         </div>
       );
   }
@@ -44,10 +54,19 @@ const EventShell: React.FC = () => {
   if (isLocked) {
       return (
           <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
-              <div className="bg-slate-900 p-8 rounded-[2rem] border border-slate-800 max-w-md w-full text-center space-y-6">
+              <div className="bg-slate-900 p-8 rounded-[2rem] border border-slate-800 max-w-md w-full text-center space-y-6 animate-fadeIn">
                   <span className="text-4xl">🔒</span>
                   <h2 className="text-2xl font-black text-white">Private Event</h2>
                   <p className="text-slate-400">This competition requires an access key.</p>
+                  
+                  {user && (
+                      <div className="bg-slate-800/50 p-4 rounded-xl text-xs text-slate-400 mb-4">
+                          Logged in as <span className="text-white font-bold">{user.email}</span>
+                          <br/>
+                          (Role: {userRole})
+                      </div>
+                  )}
+
                   <form onSubmit={handleGateUnlock} className="space-y-4">
                       <input 
                         type="password"
@@ -56,7 +75,7 @@ const EventShell: React.FC = () => {
                         className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-white focus:border-indigo-500 outline-none text-center"
                         placeholder="Enter Access Key"
                       />
-                      <button type="submit" className="w-full py-3 bg-indigo-600 rounded-xl text-white font-black uppercase tracking-widest text-xs hover:bg-indigo-500">
+                      <button type="submit" className="w-full py-3 bg-indigo-600 rounded-xl text-white font-black uppercase tracking-widest text-xs hover:bg-indigo-500 shadow-lg">
                           Unlock
                       </button>
                       <button type="button" onClick={() => navigate('/')} className="text-slate-500 text-xs font-bold hover:text-white">
