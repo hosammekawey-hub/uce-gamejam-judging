@@ -1,6 +1,6 @@
 
 import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { CompetitionConfig, Contestant, Rating, Judge, UserRole, Criterion, GlobalSettings } from '../types';
 import { SyncService } from '../services/syncService';
 import { DEFAULT_CONFIG } from '../constants';
@@ -39,6 +39,7 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const { eventId } = useParams<{ eventId: string }>();
   const { user } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const [config, setConfig] = useState<CompetitionConfig>(DEFAULT_CONFIG);
   const [contestants, setContestants] = useState<Contestant[]>([]);
@@ -173,8 +174,16 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Determine Role
   useEffect(() => {
+    // Check if user explicitly requested a specific role (e.g. Organizer viewing as Judge)
+    const preferredRole = location.state?.preferredRole as UserRole | undefined;
+
     // 1. Check if Organizer via Auth ID
     if (user && config.organizerId && user.id === config.organizerId) {
+        // ALLOW OVERRIDE: If Organizer wants to be a Judge and is in the judges list
+        if (preferredRole === 'judge' && judges.some(j => j.userId === user.id)) {
+            setUserRole('judge');
+            return;
+        }
         setUserRole('organizer');
         return;
     }
@@ -182,7 +191,11 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     // 2. Check if Organizer via Session Secret (Guest Mode)
     const storedOrgPass = sessionStorage.getItem(`org_${eventId}`);
     if (storedOrgPass) {
-        // In a real app we'd verify this hash again, but for now we trust the session claim if data loaded
+        // ALLOW OVERRIDE: If Guest Organizer wants to be a Judge (requires being in judges list)
+        if (preferredRole === 'judge' && user && judges.some(j => j.userId === user.id)) {
+             setUserRole('judge');
+             return;
+        }
         setUserRole('organizer');
         return;
     }
@@ -202,7 +215,7 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     // Default
     setUserRole('viewer');
 
-  }, [user, config.organizerId, judges, contestants, eventId]);
+  }, [user, config.organizerId, judges, contestants, eventId, location.state]);
 
 
   // Actions

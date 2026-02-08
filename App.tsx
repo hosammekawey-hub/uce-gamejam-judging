@@ -183,7 +183,8 @@ const PortalWrapper = () => {
                 if (role === 'organizer' && config?.organizerPass) {
                     sessionStorage.setItem(`org_${compId}`, config.organizerPass);
                 }
-                navigate(`/event/${compId}`);
+                // Pass preferredRole in state to override default role logic (e.g. Organizer viewing as Judge)
+                navigate(`/event/${compId}`, { state: { preferredRole: role } });
             }}
             onAdminLogin={() => navigate('/admin')}
         />
