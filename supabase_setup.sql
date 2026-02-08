@@ -64,35 +64,39 @@ DROP POLICY IF EXISTS "Only Master can add admins" ON public.system_admins;
 DROP POLICY IF EXISTS "Only Master can remove admins" ON public.system_admins;
 
 -- Policy: Allow ANY listed admin to VIEW the table
+-- UPDATED: Case-insensitive check
 CREATE POLICY "Admins can view admin list"
 ON public.system_admins
 FOR SELECT
 TO authenticated
 USING (
-  EXISTS (SELECT 1 FROM public.system_admins WHERE email = auth.email())
+  EXISTS (SELECT 1 FROM public.system_admins WHERE lower(email) = lower(auth.email()))
 );
 
 -- Policy: Only MASTER can ADD new admins
+-- UPDATED: Case-insensitive check
 CREATE POLICY "Only Master can add admins"
 ON public.system_admins
 FOR INSERT
 TO authenticated
 WITH CHECK (
-  EXISTS (SELECT 1 FROM public.system_admins WHERE email = auth.email() AND role = 'master')
+  EXISTS (SELECT 1 FROM public.system_admins WHERE lower(email) = lower(auth.email()) AND role = 'master')
 );
 
 -- Policy: Only MASTER can REMOVE admins (but cannot remove themselves directly via delete)
+-- UPDATED: Case-insensitive check
 CREATE POLICY "Only Master can remove admins"
 ON public.system_admins
 FOR DELETE
 TO authenticated
 USING (
-  EXISTS (SELECT 1 FROM public.system_admins WHERE email = auth.email() AND role = 'master')
+  EXISTS (SELECT 1 FROM public.system_admins WHERE lower(email) = lower(auth.email()) AND role = 'master')
   AND role != 'master' -- Prevent accidental self-deletion
 );
 
 -- 5. SEED MASTER ADMIN (Idempotent)
 -- Ensure Hosam is Master. If he exists as admin, upgrade him.
+-- We use lower case for storage consistency
 INSERT INTO public.system_admins (email, added_by, role)
 VALUES ('hosam.mekawey@gmail.com', 'system_seed', 'master')
 ON CONFLICT (email) DO UPDATE SET role = 'master';
@@ -105,18 +109,18 @@ RETURNS VOID AS $$
 DECLARE
   current_user_email TEXT;
 BEGIN
-  current_user_email := auth.email();
+  current_user_email := lower(auth.email());
 
   -- Security Check: Executing user MUST be the current master
-  IF NOT EXISTS (SELECT 1 FROM public.system_admins WHERE email = current_user_email AND role = 'master') THEN
+  IF NOT EXISTS (SELECT 1 FROM public.system_admins WHERE lower(email) = current_user_email AND role = 'master') THEN
     RAISE EXCEPTION 'Access Denied: Only the Master SysAdmin can transfer ownership.';
   END IF;
 
   -- 1. Demote current master
-  UPDATE public.system_admins SET role = 'admin' WHERE email = current_user_email;
+  UPDATE public.system_admins SET role = 'admin' WHERE lower(email) = current_user_email;
   
   -- 2. Promote new master (Insert if not exists, Update if exists)
-  INSERT INTO public.system_admins (email, role) VALUES (new_master_email, 'master')
+  INSERT INTO public.system_admins (email, role) VALUES (lower(new_master_email), 'master')
   ON CONFLICT (email) DO UPDATE SET role = 'master';
   
 END;

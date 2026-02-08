@@ -54,12 +54,14 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (initialUser?.id) {
+    if (initialUser?.id && initialUser?.email) {
         refreshUserEvents(initialUser.id);
         setupRealtimeSubscription(initialUser.id);
         
         // Check admin status
-        SyncService.isSystemAdmin(initialUser.email).then(setIsAdmin);
+        SyncService.isSystemAdmin(initialUser.email)
+            .then(res => setIsAdmin(res))
+            .catch(err => console.error("Admin check failed", err));
     } else {
         setMyEvents([]);
         setJudgingEvents([]);
@@ -76,7 +78,7 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
             dashboardSubRef.current.unsubscribe();
         }
     };
-  }, [initialUser?.id]);
+  }, [initialUser?.id, initialUser?.email]);
 
   const setupRealtimeSubscription = (userId: string) => {
       if (dashboardSubRef.current) dashboardSubRef.current.unsubscribe();
@@ -352,7 +354,7 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
                     {isAdmin && (
                         <button 
                             onClick={onAdminLogin}
-                            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-black uppercase tracking-widest transition-all shadow-lg border border-indigo-500"
+                            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-black uppercase tracking-widest transition-all shadow-lg border border-indigo-500 animate-slideUp"
                         >
                             SysAdmin Panel
                         </button>

@@ -90,11 +90,14 @@ export const SyncService = {
 
   async isSystemAdmin(email: string): Promise<boolean> {
       if (!email) return false;
+      const normalizedEmail = email.toLowerCase().trim();
+
       // RLS ensures we can only find the record if we are allowed to see it
+      // We query using ilike or normalized email just to be safe
       const { data, error } = await supabase
         .from('system_admins')
         .select('email')
-        .eq('email', email)
+        .eq('email', normalizedEmail)
         .single();
       
       return !!data && !error;
@@ -117,7 +120,7 @@ export const SyncService = {
   async addSystemAdmin(email: string): Promise<{ success: boolean; message?: string }> {
       const { error } = await supabase
         .from('system_admins')
-        .insert({ email: email.toLowerCase(), role: 'admin' });
+        .insert({ email: email.toLowerCase().trim(), role: 'admin' });
       
       if (error) return { success: false, message: error.message };
       return { success: true };
@@ -127,13 +130,13 @@ export const SyncService = {
       const { error } = await supabase
         .from('system_admins')
         .delete()
-        .eq('email', email);
+        .eq('email', email.toLowerCase().trim());
       
       return !error;
   },
 
   async transferMasterRole(newMasterEmail: string): Promise<{ success: boolean; message?: string }> {
-      const { error } = await supabase.rpc('transfer_master_role', { new_master_email: newMasterEmail });
+      const { error } = await supabase.rpc('transfer_master_role', { new_master_email: newMasterEmail.toLowerCase().trim() });
       
       if (error) return { success: false, message: error.message };
       return { success: true };
