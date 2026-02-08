@@ -73,8 +73,6 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
         if (isMounted) {
             setConfig(meta);
-            // Preliminary role check based on local session secrets (handled by gateway usually)
-            // or Auth ID
         }
 
         // 2. Get Full State
@@ -157,7 +155,6 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                         visibility: payload.new.visibility || 'public',
                         viewPass: payload.new.view_pass || '',
                         registration: payload.new.registration || 'closed',
-                        // Passwords don't come back on public update stream usually, safe defaults
                     }));
                 }
             }
@@ -172,50 +169,62 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
   }, [eventId]);
 
-  // Determine Role
+  // Determine Role Logic - Robust Implementation
   useEffect(() => {
-    // Check if user explicitly requested a specific role (e.g. Organizer viewing as Judge)
-    const preferredRole = location.state?.preferredRole as UserRole | undefined;
+    // Wait for data to load so we know who is a judge/contestant
+    if (isLoading) return;
 
-    // 1. Check if Organizer via Auth ID
-    if (user && config.organizerId && user.id === config.organizerId) {
-        // ALLOW OVERRIDE: If Organizer wants to be a Judge and is in the judges list
-        if (preferredRole === 'judge' && judges.some(j => j.userId === user.id)) {
-            setUserRole('judge');
-            return;
-        }
-        setUserRole('organizer');
-        return;
+    const navStateRole = location.state?.preferredRole as UserRole | undefined;
+    const sessionKey = `role_${eventId}`;
+    const storedRole = sessionStorage.getItem(sessionKey) as UserRole | null;
+
+    // 1. Determine all valid capabilities for this user
+    const capabilities: UserRole[] = [];
+
+    // Is Organizer? (Auth ID check or Guest Pass check)
+    const isOrgAuth = user && config.organizerId && user.id === config.organizerId;
+    const isOrgGuest = !!sessionStorage.getItem(`org_${eventId}`);
+    if (isOrgAuth || isOrgGuest) capabilities.push('organizer');
+
+    // Is Judge?
+    // User must be in judges list. 
+    // Edge Case: Guest Organizer can also act as Judge if they added themselves to the judge list (linking by name/id)
+    // For now, strict check on userId for authenticated users.
+    const isJudge = user && judges.some(j => j.userId === user.id);
+    if (isJudge) capabilities.push('judge');
+
+    // Is Contestant?
+    const isContestant = user && contestants.some(c => c.userId === user.id);
+    if (isContestant) capabilities.push('contestant');
+
+    capabilities.push('viewer'); // Everyone is at least a viewer
+
+    // 2. Select Role based on Priority
+    let finalRole: UserRole = 'viewer';
+
+    // Priority A: Navigation State (Explicit User Intent from Portal)
+    if (navStateRole && capabilities.includes(navStateRole)) {
+        finalRole = navStateRole;
+    } 
+    // Priority B: Session Storage (Persisted Intent across reloads/nav)
+    else if (storedRole && capabilities.includes(storedRole)) {
+        finalRole = storedRole;
     }
-    
-    // 2. Check if Organizer via Session Secret (Guest Mode)
-    const storedOrgPass = sessionStorage.getItem(`org_${eventId}`);
-    if (storedOrgPass) {
-        // ALLOW OVERRIDE: If Guest Organizer wants to be a Judge (requires being in judges list)
-        if (preferredRole === 'judge' && user && judges.some(j => j.userId === user.id)) {
-             setUserRole('judge');
-             return;
-        }
-        setUserRole('organizer');
-        return;
+    // Priority C: Default Hierarchy
+    else {
+        if (capabilities.includes('organizer')) finalRole = 'organizer';
+        else if (capabilities.includes('judge')) finalRole = 'judge';
+        else if (capabilities.includes('contestant')) finalRole = 'contestant';
+        else finalRole = 'viewer';
     }
 
-    // 3. Check if Judge via Auth ID
-    if (user && judges.some(j => j.userId === user.id)) {
-        setUserRole('judge');
-        return;
+    // 3. Update State & Persistence
+    setUserRole(finalRole);
+    if (finalRole !== storedRole) {
+        sessionStorage.setItem(sessionKey, finalRole);
     }
 
-    // 4. Check if Contestant via Auth ID
-    if (user && contestants.some(c => c.userId === user.id)) {
-        setUserRole('contestant');
-        return;
-    }
-
-    // Default
-    setUserRole('viewer');
-
-  }, [user, config.organizerId, judges, contestants, eventId, location.state]);
+  }, [user, config.organizerId, judges, contestants, eventId, location.state, isLoading]);
 
 
   // Actions
@@ -233,16 +242,17 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const deleteEvent = async () => {
       if (!eventId) return;
-      // Use stored pass or auth
       const storedOrgPass = sessionStorage.getItem(`org_${eventId}`);
       const success = await SyncService.deleteEvent(eventId, storedOrgPass || undefined);
-      if (success) navigate('/');
+      if (success) {
+          sessionStorage.removeItem(`role_${eventId}`); // Cleanup
+          navigate('/');
+      }
   };
 
   // Mutations
   const addContestant = async (c: Contestant) => {
     if (!eventId) return;
-    // Optimistic
     if (c.id && c.id.length > 10) {
         setContestants(prev => {
             const index = prev.findIndex(t => t.id === c.id);
@@ -263,10 +273,7 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       await SyncService.removeContestant(eventId, id);
   };
 
-  const addJudge = async (j: Judge) => {
-      // Logic handled via join usually, but for admin adding manual judges?
-      // Not implemented in UI yet, but placeholder
-  };
+  const addJudge = async (j: Judge) => {};
 
   const removeJudge = async (id: string) => {
       if (!eventId) return;
@@ -287,7 +294,6 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (config.visibility === 'public') return true;
       if (config.visibility === 'private') {
           if (config.viewPass === pass) return true;
-          // Also check if user is organizer/judge/contestant who might have implicit access
           if (userRole !== 'viewer') return true;
           return false;
       }
