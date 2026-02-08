@@ -24,6 +24,9 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
   const [judgingEvents, setJudgingEvents] = useState<any[]>([]);
   const [participatingEvents, setParticipatingEvents] = useState<any[]>([]);
 
+  // Admin Check
+  const [isAdmin, setIsAdmin] = useState(false);
+
   // Form States
   const [viewEventId, setViewEventId] = useState('');
   const [viewPass, setViewPass] = useState('');
@@ -54,10 +57,14 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
     if (initialUser?.id) {
         refreshUserEvents(initialUser.id);
         setupRealtimeSubscription(initialUser.id);
+        
+        // Check admin status
+        SyncService.isSystemAdmin(initialUser.email).then(setIsAdmin);
     } else {
         setMyEvents([]);
         setJudgingEvents([]);
         setParticipatingEvents([]);
+        setIsAdmin(false);
         if (dashboardSubRef.current) {
             dashboardSubRef.current.unsubscribe();
             dashboardSubRef.current = null;
@@ -342,6 +349,14 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
             </div>
             {initialUser ? (
                 <div className="flex items-center gap-6">
+                    {isAdmin && (
+                        <button 
+                            onClick={onAdminLogin}
+                            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-black uppercase tracking-widest transition-all shadow-lg border border-indigo-500"
+                        >
+                            SysAdmin Panel
+                        </button>
+                    )}
                     <div className="text-right hidden md:block">
                         <p className="font-bold text-white">{initialUser.full_name}</p>
                         <p className="text-xs text-slate-500">{initialUser.email}</p>
