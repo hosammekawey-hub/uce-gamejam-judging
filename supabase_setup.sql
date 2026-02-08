@@ -53,7 +53,41 @@ CREATE TABLE IF NOT EXISTS public.system_admins (
 -- Add role column if it doesn't exist
 ALTER TABLE public.system_admins ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'admin';
 
--- 4. ENABLE RLS
+-- 4. HELPER FUNCTIONS TO PREVENT RLS RECURSION
+-- These must be SECURITY DEFINER to bypass RLS when called within the policy
+
+CREATE OR REPLACE FUNCTION public.check_is_admin()
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1
+    FROM public.system_admins
+    WHERE lower(email) = lower(auth.email())
+  );
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.check_is_master()
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1
+    FROM public.system_admins
+    WHERE lower(email) = lower(auth.email())
+    AND role = 'master'
+  );
+END;
+$$;
+
+-- 5. ENABLE RLS & POLICIES
 ALTER TABLE public.system_admins ENABLE ROW LEVEL SECURITY;
 
 -- DROP OLD POLICIES TO REFRESH LOGIC
@@ -64,46 +98,41 @@ DROP POLICY IF EXISTS "Only Master can add admins" ON public.system_admins;
 DROP POLICY IF EXISTS "Only Master can remove admins" ON public.system_admins;
 
 -- Policy: Allow ANY listed admin to VIEW the table
--- UPDATED: Case-insensitive check
+-- Uses helper function to avoid infinite recursion
 CREATE POLICY "Admins can view admin list"
 ON public.system_admins
 FOR SELECT
 TO authenticated
 USING (
-  EXISTS (SELECT 1 FROM public.system_admins WHERE lower(email) = lower(auth.email()))
+  public.check_is_admin()
 );
 
 -- Policy: Only MASTER can ADD new admins
--- UPDATED: Case-insensitive check
 CREATE POLICY "Only Master can add admins"
 ON public.system_admins
 FOR INSERT
 TO authenticated
 WITH CHECK (
-  EXISTS (SELECT 1 FROM public.system_admins WHERE lower(email) = lower(auth.email()) AND role = 'master')
+  public.check_is_master()
 );
 
--- Policy: Only MASTER can REMOVE admins (but cannot remove themselves directly via delete)
--- UPDATED: Case-insensitive check
+-- Policy: Only MASTER can REMOVE admins
 CREATE POLICY "Only Master can remove admins"
 ON public.system_admins
 FOR DELETE
 TO authenticated
 USING (
-  EXISTS (SELECT 1 FROM public.system_admins WHERE lower(email) = lower(auth.email()) AND role = 'master')
+  public.check_is_master()
   AND role != 'master' -- Prevent accidental self-deletion
 );
 
--- 5. SEED MASTER ADMIN (Idempotent)
+-- 6. SEED MASTER ADMIN (Idempotent)
 -- Ensure Hosam is Master. If he exists as admin, upgrade him.
--- We use lower case for storage consistency
 INSERT INTO public.system_admins (email, added_by, role)
 VALUES ('hosam.mekawey@gmail.com', 'system_seed', 'master')
 ON CONFLICT (email) DO UPDATE SET role = 'master';
 
--- 6. RPC: TRANSFER MASTER ROLE
--- This function allows the current master to promote another email to master.
--- The current master is automatically demoted to 'admin'.
+-- 7. RPC: TRANSFER MASTER ROLE
 CREATE OR REPLACE FUNCTION transfer_master_role(new_master_email TEXT)
 RETURNS VOID AS $$
 DECLARE

@@ -89,25 +89,32 @@ export const SyncService = {
   // --- SYSTEM ADMIN MANAGEMENT (DB BACKED) ---
 
   async isSystemAdmin(email: string): Promise<boolean> {
-      if (!email) return false;
-      const normalizedEmail = email.toLowerCase().trim();
-
-      // RLS ensures we can only find the record if we are allowed to see it
-      // We query using ilike or normalized email just to be safe
-      const { data, error } = await supabase
-        .from('system_admins')
-        .select('email')
-        .eq('email', normalizedEmail)
-        .single();
+      // FIX: Use RPC 'check_is_admin' which runs as Security Definer.
+      // This bypasses the RLS recursion loop on the table query.
+      // The function uses auth.email() internally, so we don't need to pass the email.
+      const { data, error } = await supabase.rpc('check_is_admin');
       
-      return !!data && !error;
+      if (error) {
+          // Fallback logic in case SQL function is missing (backward compatibility)
+          if (!email) return false;
+          console.warn("RPC check_is_admin failed, falling back to table query (risk of 500 error):", error.message);
+          const normalizedEmail = email.toLowerCase().trim();
+          const { data: tableData } = await supabase
+            .from('system_admins')
+            .select('email')
+            .eq('email', normalizedEmail)
+            .single();
+          return !!tableData;
+      }
+      
+      return !!data;
   },
 
   async getSystemAdmins(): Promise<SystemAdmin[]> {
       const { data, error } = await supabase
         .from('system_admins')
         .select('*')
-        .order('role', { ascending: false }) // Master first ('master' > 'admin' alphabetically no, but close enough, usually explicit sort is better)
+        .order('role', { ascending: false }) // Master first
         .order('created_at', { ascending: true });
       
       if (error) {
