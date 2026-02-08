@@ -198,15 +198,22 @@ export const SyncService = {
 
   async getAllEventsAdmin() {
       // ADMIN ONLY: Fetch basic info for all events to display in the inspector
-      // UPDATED: Now fetches sensitive columns (passes) so Admins can edit them
-      const { data, error } = await supabase
-        .from('events')
-        .select('id, title, organizer_id, created_at, description, organizer_pass, judge_pass, view_pass, visibility, registration')
-        .order('created_at', { ascending: false });
+      // UPDATED: Now uses RPC to get organizer emails from auth.users
+      const { data, error } = await supabase.rpc('get_all_events_admin');
       
       if (error) {
-          console.error("Admin Fetch Error:", error);
-          return [];
+          console.error("Admin Fetch Error (RPC):", error);
+          // Fallback if RPC doesn't exist yet: fetch without email
+          const { data: fallback, error: fallbackError } = await supabase
+            .from('events')
+            .select('id, title, organizer_id, created_at, description, organizer_pass, judge_pass, view_pass, visibility, registration')
+            .order('created_at', { ascending: false });
+          
+          if (fallbackError) {
+              console.error("Admin Fetch Error (Fallback):", fallbackError);
+              return [];
+          }
+          return fallback;
       }
       return data;
   },

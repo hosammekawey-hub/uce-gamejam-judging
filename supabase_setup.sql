@@ -155,7 +155,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- 8. RPC: TRANSFER EVENT OWNERSHIP (New)
+-- 8. RPC: TRANSFER EVENT OWNERSHIP
 -- Allows SysAdmin to set organizer by email (looks up UUID internally)
 CREATE OR REPLACE FUNCTION public.transfer_event_ownership(p_event_id TEXT, p_new_email TEXT)
 RETURNS JSON AS $$
@@ -175,3 +175,47 @@ BEGIN
   RETURN json_build_object('success', true, 'new_id', v_user_id);
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- 9. RPC: GET ALL EVENTS (ADMIN) with Emails
+CREATE OR REPLACE FUNCTION public.get_all_events_admin()
+RETURNS TABLE (
+  id TEXT,
+  title TEXT,
+  organizer_id UUID,
+  organizer_email TEXT,
+  created_at TIMESTAMP WITH TIME ZONE,
+  description TEXT,
+  organizer_pass TEXT,
+  judge_pass TEXT,
+  view_pass TEXT,
+  visibility TEXT,
+  registration TEXT
+) 
+SECURITY DEFINER
+SET search_path = public, auth
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  -- Check if requesting user is an admin
+  IF NOT public.check_is_admin() THEN
+    RAISE EXCEPTION 'Access Denied';
+  END IF;
+
+  RETURN QUERY
+  SELECT 
+    e.id, 
+    e.title, 
+    e.organizer_id, 
+    au.email::TEXT as organizer_email, 
+    e.created_at, 
+    e.description, 
+    e.organizer_pass, 
+    e.judge_pass, 
+    e.view_pass, 
+    e.visibility, 
+    e.registration
+  FROM public.events e
+  LEFT JOIN auth.users au ON e.organizer_id = au.id
+  ORDER BY e.created_at DESC;
+END;
+$$;

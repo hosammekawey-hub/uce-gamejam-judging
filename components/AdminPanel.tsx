@@ -171,6 +171,8 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ initialSettings, onUpdateSettin
           setAllEvents(prev => prev.map(e => e.id === editingEvent.id ? { ...e, ...editingEvent } : e));
           setStatusMsg('Event configuration updated successfully.');
           closeEventEditor();
+          // Reload events to refresh emails if changed
+          loadEvents(); 
       } else {
           alert('Failed to update event configuration.');
       }
@@ -340,7 +342,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ initialSettings, onUpdateSettin
                                     <tr className="border-b border-slate-800 text-[10px] font-black uppercase tracking-widest text-slate-500">
                                         <th className="px-6 py-4">Event ID</th>
                                         <th className="px-6 py-4">Title</th>
-                                        <th className="px-6 py-4">Organizer ID</th>
+                                        <th className="px-6 py-4">Organizer</th>
                                         <th className="px-6 py-4">Created At</th>
                                         <th className="px-6 py-4 text-right">Actions</th>
                                     </tr>
@@ -350,7 +352,9 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ initialSettings, onUpdateSettin
                                         <tr key={evt.id} className="hover:bg-slate-800/50 transition-colors group">
                                             <td className="px-6 py-4 font-mono text-indigo-400 font-bold text-sm">{evt.id}</td>
                                             <td className="px-6 py-4 font-bold text-white">{evt.title}</td>
-                                            <td className="px-6 py-4 text-xs font-mono text-slate-500 truncate max-w-[150px]">{evt.organizer_id}</td>
+                                            <td className="px-6 py-4 text-xs font-mono text-slate-500 truncate max-w-[200px]">
+                                                {evt.organizer_email || evt.organizer_id}
+                                            </td>
                                             <td className="px-6 py-4 text-xs text-slate-400 font-mono">{new Date(evt.created_at).toLocaleDateString()}</td>
                                             <td className="px-6 py-4 text-right flex justify-end gap-2">
                                                 <button 
@@ -476,12 +480,13 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ initialSettings, onUpdateSettin
                            <h3 className="font-black text-sm uppercase tracking-wider text-slate-500">Ownership & Keys</h3>
                            
                            <div className="space-y-2">
-                               <label className="text-[10px] font-black uppercase tracking-widest text-slate-600">Organizer ID (Current)</label>
+                               <label className="text-[10px] font-black uppercase tracking-widest text-slate-600">Organizer Email (Current)</label>
                                <input 
-                                 value={editingEvent.organizer_id}
+                                 value={editingEvent.organizer_email || 'Unknown (Guest/Deleted)'}
                                  readOnly
                                  className="w-full bg-slate-950/50 border border-slate-800 rounded-xl px-4 py-3 text-xs font-mono text-slate-500 focus:outline-none"
                                />
+                               <div className="mt-1 text-[9px] text-slate-600 font-mono">UUID: {editingEvent.organizer_id}</div>
                            </div>
 
                            <div className="space-y-2">
