@@ -1,6 +1,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { Contestant, Rating, ScoreSet, UserRole, Criterion } from '../types';
+import { RatingSubmissionSchema } from '../utils/validation';
 
 interface RatingFormProps {
   team: Contestant;
@@ -39,6 +40,21 @@ const RatingForm: React.FC<RatingFormProps> = ({ team, rubric, judgeName, curren
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (isReadOnly) return;
+
+    // Zod Validation
+    const validation = RatingSubmissionSchema.safeParse({
+        teamId: team.id,
+        judgeId: judgeName,
+        scores,
+        feedback,
+        isDisqualified
+    });
+
+    if (!validation.success) {
+        alert("Please ensure all scores are valid (1-10) and feedback is concise.");
+        return;
+    }
+
     onSave({
       teamId: team.id,
       judgeId: judgeName,
@@ -145,7 +161,6 @@ const RatingForm: React.FC<RatingFormProps> = ({ team, rubric, judgeName, curren
                     const max = maxStr ? parseInt(maxStr) : parseInt(min);
                     const rangeMin = parseInt(min);
                     const currentScore = scores[criterion.id] || 5;
-                    // Updated logic: Works for decimals too (e.g. 7.5 falls into 7-8)
                     const isActive = currentScore >= rangeMin && currentScore <= max;
                     
                     return (

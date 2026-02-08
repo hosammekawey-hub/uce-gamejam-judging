@@ -4,6 +4,7 @@ import { UserRole, CompetitionConfig, UserProfile } from '../types';
 import { SyncService } from '../services/syncService';
 import { COMPETITION_TEMPLATES } from '../constants';
 import { RealtimeChannel } from '@supabase/supabase-js';
+import { CreateEventSchema } from '../utils/validation';
 
 interface PortalProps {
   initialUser: UserProfile | null;
@@ -158,16 +159,16 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
       setError('');
       setIdSuggestions([]);
 
+      // ZOD VALIDATION
       const cleanId = createEventId.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '');
-      
-      if (cleanId.length < 3) {
-          setError('Event ID must be at least 3 characters.');
-          setActionLoading(false);
-          return;
-      }
+      const validation = CreateEventSchema.safeParse({
+          competitionId: cleanId,
+          organizerPass: createOrgPass,
+          judgePass: createEventPass
+      });
 
-      if (!createOrgPass || createOrgPass.length < 4) {
-          setError('Organizer Password must be at least 4 characters.');
+      if (!validation.success) {
+          setError(validation.error.issues[0].message);
           setActionLoading(false);
           return;
       }
@@ -265,7 +266,6 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
       const eventId = joinContestantId.trim();
 
       // Validation: Check if user is already participating in this event
-      // Using case-insensitive match for the ID to be robust
       const alreadyJoined = participatingEvents.some(evt => evt.id.toLowerCase() === eventId.toLowerCase());
       if (alreadyJoined) {
           setError(`You are already a contestant in event '${eventId}'. Please manage your entry from the 'My Submissions' list below.`);

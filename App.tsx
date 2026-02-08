@@ -5,6 +5,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { EventProvider, useEvent } from './contexts/EventContext';
 import { CompetitionConfig, Contestant, GlobalSettings } from './types';
 import { COMPETITION_TEMPLATES } from './constants';
+import ErrorBoundary from './components/ErrorBoundary';
 
 import Dashboard from './components/Dashboard';
 import RatingForm from './components/RatingForm';
@@ -195,25 +196,27 @@ const PortalWrapper = () => {
 
 const App: React.FC = () => {
   return (
-    <BrowserRouter>
-        <AuthProvider>
-            <Routes>
-                <Route path="/" element={<PortalWrapper />} />
-                <Route path="/admin" element={<AdminPanel initialSettings={{judgePass:'', organizerPass:'', templates:COMPETITION_TEMPLATES}} onUpdateSettings={() => {}} onLogout={() => {}} />} />
-                
-                <Route path="/event/:eventId" element={<EventProvider><EventShell /></EventProvider>}>
-                    <Route index element={<DashboardWrapper />} />
-                    <Route path="setup" element={<SetupWrapper />} />
-                    <Route path="rate/:teamId" element={<RatingWrapper />} />
-                    <Route path="leaderboard" element={<LeaderboardWrapper />} />
-                    <Route path="entries" element={<EntriesWrapper />} />
-                    <Route path="judges" element={<JudgesWrapper />} />
-                </Route>
-                
-                <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
-        </AuthProvider>
-    </BrowserRouter>
+    <ErrorBoundary>
+        <BrowserRouter>
+            <AuthProvider>
+                <Routes>
+                    <Route path="/" element={<PortalWrapper />} />
+                    <Route path="/admin" element={<AdminPanel initialSettings={{judgePass:'', organizerPass:'', templates:COMPETITION_TEMPLATES}} onUpdateSettings={() => {}} onLogout={() => {}} />} />
+                    
+                    <Route path="/event/:eventId" element={<EventProvider><EventShell /></EventProvider>}>
+                        <Route index element={<DashboardWrapper />} />
+                        <Route path="setup" element={<SetupWrapper />} />
+                        <Route path="rate/:teamId" element={<RatingWrapper />} />
+                        <Route path="leaderboard" element={<LeaderboardWrapper />} />
+                        <Route path="entries" element={<EntriesWrapper />} />
+                        <Route path="judges" element={<JudgesWrapper />} />
+                    </Route>
+                    
+                    <Route path="*" element={<Navigate to="/" replace />} />
+                </Routes>
+            </AuthProvider>
+        </BrowserRouter>
+    </ErrorBoundary>
   );
 };
 

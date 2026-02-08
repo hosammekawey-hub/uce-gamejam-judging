@@ -2,6 +2,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Contestant, UserRole, CompetitionConfig, Rating } from '../types';
 import { SyncService } from '../services/syncService';
+import { ContestantEntrySchema } from '../utils/validation';
 
 interface EntryManagementProps {
   teams: Contestant[];
@@ -52,16 +53,7 @@ const EntryManagement: React.FC<EntryManagementProps> = ({ teams, currentRole, o
       }
       setIsUploading(true);
       try {
-        // Assume event ID is available from context or URL? 
-        // Actually, onAddTeam handles the DB logic, but we need the EventID to organize storage.
-        // We can use a generic 'temp' folder or rely on the parent to clean it up, 
-        // but typically we'd pass the event ID. Since we don't have it as prop here, 
-        // we'll use a 'uploads' folder for now or rely on SyncService to handle structure.
-        // NOTE: SyncService.uploadThumbnail now expects eventId. 
-        // We will assume 'uploads' as a fallback if we can't get the ID easily, 
-        // OR we can parse it from existing entries if available.
         const eventId = teams.length > 0 ? teams[0].id.split('_')[0] : 'uploads'; 
-        
         const uploadedUrl = await SyncService.uploadThumbnail(file, eventId);
         
         if (uploadedUrl) {
@@ -80,11 +72,21 @@ const EntryManagement: React.FC<EntryManagementProps> = ({ teams, currentRole, o
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Zod Validation
+    const validation = ContestantEntrySchema.safeParse({
+        name: newTeam.name,
+        title: newTeam.title,
+        description: newTeam.desc,
+        thumbnail: thumbnailUrl
+    });
+
+    if (!validation.success) {
+        alert(validation.error.issues[0].message);
+        return;
+    }
+
     if (newTeam.name && newTeam.title) {
-      // Determine ID: 
-      // 1. If contestant, use existing ID or empty (new).
-      // 2. If organizer editing, use `editingTeamId`.
-      // 3. If organizer creating, use empty (new).
       const idToUse = isContestant 
           ? (existingEntry ? existingEntry.id : '') 
           : (editingTeamId || '');
@@ -103,7 +105,6 @@ const EntryManagement: React.FC<EntryManagementProps> = ({ teams, currentRole, o
       });
 
       if (!isContestant) {
-          // Reset form after add/update
           setNewTeam({ name: '', title: '', desc: '' });
           setThumbnailUrl('');
           setEditingTeamId(null);
