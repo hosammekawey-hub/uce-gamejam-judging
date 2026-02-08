@@ -198,9 +198,10 @@ export const SyncService = {
 
   async getAllEventsAdmin() {
       // ADMIN ONLY: Fetch basic info for all events to display in the inspector
+      // UPDATED: Now fetches sensitive columns (passes) so Admins can edit them
       const { data, error } = await supabase
         .from('events')
-        .select('id, title, organizer_id, created_at, description')
+        .select('id, title, organizer_id, created_at, description, organizer_pass, judge_pass, view_pass, visibility, registration')
         .order('created_at', { ascending: false });
       
       if (error) {
@@ -337,9 +338,12 @@ export const SyncService = {
       
       if (config.isSetupComplete !== undefined) payload.is_setup_complete = config.isSetupComplete;
 
-      // Passwords can be updated, but are never read back by the client
+      // Passwords
       if (config.organizerPass !== undefined) payload.organizer_pass = config.organizerPass;
       if (config.judgePass !== undefined) payload.judge_pass = config.judgePass;
+      
+      // Ownership transfer
+      if (config.organizerId !== undefined) payload.organizer_id = config.organizerId;
       
       if (config.rubric) payload.rubric = config.rubric; 
       if (config.tieBreakers) payload.tie_breakers = config.tieBreakers;

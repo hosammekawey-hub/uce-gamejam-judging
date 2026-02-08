@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { GlobalSettings, CompetitionTemplate, Criterion, SystemAdmin } from '../types';
+import { GlobalSettings, CompetitionTemplate, Criterion, SystemAdmin, CompetitionConfig } from '../types';
 import { SyncService } from '../services/syncService';
 import { DEFAULT_RUBRIC } from '../constants';
 import { useAuth } from '../contexts/AuthContext';
@@ -21,6 +21,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ initialSettings, onUpdateSettin
   // Event Inspector State
   const [allEvents, setAllEvents] = useState<any[]>([]);
   const [isLoadingEvents, setIsLoadingEvents] = useState(false);
+  const [editingEvent, setEditingEvent] = useState<any>(null); // For Event Edit Modal
 
   // Admin Management State
   const [adminList, setAdminList] = useState<SystemAdmin[]>([]);
@@ -123,6 +124,41 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ initialSettings, onUpdateSettin
           }
       }
   }
+
+  // --- EVENT EDITING LOGIC ---
+
+  const openEventEditor = (event: any) => {
+      setEditingEvent({ ...event }); // Clone to avoid direct mutation
+  };
+
+  const closeEventEditor = () => {
+      setEditingEvent(null);
+  };
+
+  const handleSaveEventChanges = async () => {
+      if (!editingEvent) return;
+
+      const payload: Partial<CompetitionConfig> = {
+          title: editingEvent.title,
+          organizerPass: editingEvent.organizer_pass,
+          judgePass: editingEvent.judge_pass,
+          viewPass: editingEvent.view_pass,
+          visibility: editingEvent.visibility,
+          registration: editingEvent.registration,
+          organizerId: editingEvent.organizer_id
+      };
+
+      const success = await SyncService.updateEventConfig(editingEvent.id, payload);
+      if (success) {
+          setAllEvents(prev => prev.map(e => e.id === editingEvent.id ? { ...e, ...editingEvent } : e));
+          setStatusMsg('Event configuration updated successfully.');
+          closeEventEditor();
+      } else {
+          alert('Failed to update event configuration.');
+      }
+      setTimeout(() => setStatusMsg(''), 3000);
+  };
+
 
   const handleSaveSettings = async () => {
     setIsSaving(true);
@@ -261,7 +297,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ initialSettings, onUpdateSettin
         </div>
         
         {statusMsg && (
-            <div className={`p-4 rounded-xl border font-bold text-center animate-slideUp ${statusMsg.includes('Success') ? 'bg-emerald-950/50 border-emerald-500/30 text-emerald-400' : 'bg-rose-950/50 border-rose-500/30 text-rose-400'}`}>
+            <div className={`p-4 rounded-xl border font-bold text-center animate-slideUp ${statusMsg.includes('Success') || statusMsg.includes('successfully') ? 'bg-emerald-950/50 border-emerald-500/30 text-emerald-400' : 'bg-rose-950/50 border-rose-500/30 text-rose-400'}`}>
                 {statusMsg}
             </div>
         )}
@@ -286,6 +322,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ initialSettings, onUpdateSettin
                                     <tr className="border-b border-slate-800 text-[10px] font-black uppercase tracking-widest text-slate-500">
                                         <th className="px-6 py-4">Event ID</th>
                                         <th className="px-6 py-4">Title</th>
+                                        <th className="px-6 py-4">Organizer ID</th>
                                         <th className="px-6 py-4">Created At</th>
                                         <th className="px-6 py-4 text-right">Actions</th>
                                     </tr>
@@ -295,8 +332,15 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ initialSettings, onUpdateSettin
                                         <tr key={evt.id} className="hover:bg-slate-800/50 transition-colors group">
                                             <td className="px-6 py-4 font-mono text-indigo-400 font-bold text-sm">{evt.id}</td>
                                             <td className="px-6 py-4 font-bold text-white">{evt.title}</td>
+                                            <td className="px-6 py-4 text-xs font-mono text-slate-500 truncate max-w-[150px]">{evt.organizer_id}</td>
                                             <td className="px-6 py-4 text-xs text-slate-400 font-mono">{new Date(evt.created_at).toLocaleDateString()}</td>
-                                            <td className="px-6 py-4 text-right">
+                                            <td className="px-6 py-4 text-right flex justify-end gap-2">
+                                                <button 
+                                                    onClick={() => openEventEditor(evt)}
+                                                    className="px-4 py-2 bg-indigo-900/50 text-indigo-400 border border-indigo-900 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-indigo-600 hover:text-white transition-all opacity-0 group-hover:opacity-100"
+                                                >
+                                                    Edit
+                                                </button>
                                                 <button 
                                                     onClick={() => handleDeleteEvent(evt.id)}
                                                     className="px-4 py-2 bg-rose-950 text-rose-500 border border-rose-900/50 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-rose-600 hover:text-white transition-all opacity-0 group-hover:opacity-100"
@@ -543,6 +587,116 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ initialSettings, onUpdateSettin
         )}
 
       </div>
+      
+      {/* Event Edit Modal */}
+      {editingEvent && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-8 bg-slate-950/90 backdrop-blur-sm animate-fadeIn">
+              <div className="bg-slate-900 border border-slate-800 w-full max-w-2xl rounded-[3rem] shadow-[0_50px_100px_rgba(0,0,0,0.5)] overflow-hidden max-h-[90vh] flex flex-col">
+                  <div className="px-10 py-8 border-b border-slate-800 bg-slate-900 flex justify-between items-center">
+                    <div>
+                        <h2 className="text-2xl font-black text-white">Edit Event Config</h2>
+                        <p className="text-indigo-400 text-xs font-bold mt-1 font-mono">{editingEvent.id}</p>
+                    </div>
+                    <button onClick={closeEventEditor} className="w-10 h-10 bg-slate-800 rounded-full flex items-center justify-center text-slate-400 hover:text-rose-500 shadow-md transition-colors">✕</button>
+                  </div>
+                  
+                  <div className="p-10 space-y-8 overflow-y-auto">
+                      <div className="space-y-4">
+                           <h3 className="font-black text-sm uppercase tracking-wider text-slate-500">Ownership & Keys</h3>
+                           
+                           <div className="space-y-2">
+                               <label className="text-[10px] font-black uppercase tracking-widest text-slate-600">Organizer ID (UUID)</label>
+                               <input 
+                                 value={editingEvent.organizer_id}
+                                 onChange={e => setEditingEvent({...editingEvent, organizer_id: e.target.value})}
+                                 className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-xs font-mono text-emerald-400 focus:border-indigo-500 outline-none"
+                                 placeholder="UUID required"
+                               />
+                               <p className="text-[9px] text-slate-600">Warning: Changing this transfers ownership. Ensure the ID is a valid User UUID.</p>
+                           </div>
+
+                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                               <div className="space-y-2">
+                                   <label className="text-[10px] font-black uppercase tracking-widest text-slate-600">Guest Organizer Key</label>
+                                   <input 
+                                     value={editingEvent.organizer_pass}
+                                     onChange={e => setEditingEvent({...editingEvent, organizer_pass: e.target.value})}
+                                     className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-sm font-bold text-white focus:border-indigo-500 outline-none"
+                                   />
+                               </div>
+                               <div className="space-y-2">
+                                   <label className="text-[10px] font-black uppercase tracking-widest text-slate-600">Judge Key</label>
+                                   <input 
+                                     value={editingEvent.judge_pass}
+                                     onChange={e => setEditingEvent({...editingEvent, judge_pass: e.target.value})}
+                                     className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-sm font-bold text-white focus:border-indigo-500 outline-none"
+                                   />
+                               </div>
+                           </div>
+                      </div>
+
+                      <div className="space-y-4 pt-4 border-t border-slate-800">
+                           <h3 className="font-black text-sm uppercase tracking-wider text-slate-500">Access Control</h3>
+                           
+                           <div className="space-y-2">
+                               <label className="text-[10px] font-black uppercase tracking-widest text-slate-600">Visibility</label>
+                               <div className="flex gap-2">
+                                   <button 
+                                    onClick={() => setEditingEvent({...editingEvent, visibility: 'public'})}
+                                    className={`flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-widest border transition-all ${editingEvent.visibility === 'public' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-950 text-slate-500 border-slate-800 hover:border-slate-600'}`}
+                                   >
+                                       Public
+                                   </button>
+                                   <button 
+                                    onClick={() => setEditingEvent({...editingEvent, visibility: 'private'})}
+                                    className={`flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-widest border transition-all ${editingEvent.visibility === 'private' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-950 text-slate-500 border-slate-800 hover:border-slate-600'}`}
+                                   >
+                                       Private
+                                   </button>
+                               </div>
+                           </div>
+                           
+                           {editingEvent.visibility === 'private' && (
+                               <div className="space-y-2 animate-slideUp">
+                                   <label className="text-[10px] font-black uppercase tracking-widest text-slate-600">View Password</label>
+                                   <input 
+                                     value={editingEvent.view_pass || ''}
+                                     onChange={e => setEditingEvent({...editingEvent, view_pass: e.target.value})}
+                                     className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-sm font-bold text-white focus:border-indigo-500 outline-none"
+                                     placeholder="Required for private events"
+                                   />
+                               </div>
+                           )}
+
+                           <div className="space-y-2 pt-2">
+                               <label className="text-[10px] font-black uppercase tracking-widest text-slate-600">Registration</label>
+                               <div className="flex gap-2">
+                                   <button 
+                                    onClick={() => setEditingEvent({...editingEvent, registration: 'open'})}
+                                    className={`flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-widest border transition-all ${editingEvent.registration === 'open' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-slate-950 text-slate-500 border-slate-800 hover:border-slate-600'}`}
+                                   >
+                                       Open
+                                   </button>
+                                   <button 
+                                    onClick={() => setEditingEvent({...editingEvent, registration: 'closed'})}
+                                    className={`flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-widest border transition-all ${editingEvent.registration === 'closed' ? 'bg-amber-600 text-white border-amber-600' : 'bg-slate-950 text-slate-500 border-slate-800 hover:border-slate-600'}`}
+                                   >
+                                       Closed
+                                   </button>
+                               </div>
+                           </div>
+                      </div>
+
+                      <button 
+                        onClick={handleSaveEventChanges}
+                        className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 text-white font-black uppercase tracking-widest rounded-2xl transition-all shadow-xl shadow-indigo-600/20 text-xs"
+                      >
+                          Save Configuration
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
     </div>
   );
 };
