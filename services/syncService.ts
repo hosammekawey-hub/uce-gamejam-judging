@@ -1,4 +1,3 @@
-
 import { createClient, RealtimeChannel, AuthChangeEvent, Session } from '@supabase/supabase-js';
 import { Rating, Contestant, CompetitionConfig, GlobalSettings, Judge, UserProfile } from '../types';
 
@@ -32,7 +31,8 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 
 // CRITICAL: Explicitly select only non-sensitive columns.
 // Never select 'organizer_pass' or 'judge_pass' directly in the frontend.
-const SAFE_EVENT_COLUMNS = 'id, title, description, rubric, tie_breakers, visibility, view_pass, registration, organizer_id, created_at, updated_at';
+// Added is_setup_complete to the selection list.
+const SAFE_EVENT_COLUMNS = 'id, title, description, rubric, tie_breakers, visibility, view_pass, registration, organizer_id, is_setup_complete, created_at, updated_at';
 
 export const SyncService = {
   
@@ -220,7 +220,7 @@ export const SyncService = {
           judgePass: '',     // HIDDEN
           rubric: c.rubric || [],
           tieBreakers: c.tieBreakers || [],
-          isSetupComplete: true,
+          isSetupComplete: c.isSetupComplete, // NOW DYNAMIC FROM RPC
           organizerId: c.organizerId,
           visibility: c.visibility || 'public',
           viewPass: c.viewPass || '',
@@ -242,7 +242,8 @@ export const SyncService = {
           view_pass: config.viewPass,
           registration: config.registration,
           rubric: config.rubric,      // JSONB
-          tie_breakers: config.tieBreakers // JSONB
+          tie_breakers: config.tieBreakers, // JSONB
+          is_setup_complete: config.isSetupComplete // PERSIST THIS FIELD
       });
       
       if (error) {
@@ -261,6 +262,8 @@ export const SyncService = {
       if (config.registration) payload.registration = config.registration;
       if (config.viewPass !== undefined) payload.view_pass = config.viewPass;
       
+      if (config.isSetupComplete !== undefined) payload.is_setup_complete = config.isSetupComplete;
+
       // Passwords can be updated, but are never read back by the client
       if (config.organizerPass !== undefined) payload.organizer_pass = config.organizerPass;
       if (config.judgePass !== undefined) payload.judge_pass = config.judgePass;
@@ -306,7 +309,7 @@ export const SyncService = {
           judgePass: '',     // HIDDEN
           rubric: data.rubric || [],
           tieBreakers: data.tie_breakers || [],
-          isSetupComplete: true,
+          isSetupComplete: data.is_setup_complete, // NOW MAPPED FROM DB
           organizerId: data.organizer_id,
           visibility: data.visibility || 'public',
           viewPass: data.view_pass || '',

@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { UserRole, CompetitionConfig, UserProfile } from '../types';
 import { SyncService } from '../services/syncService';
@@ -160,9 +159,11 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
       setIdSuggestions([]);
 
       // ZOD VALIDATION
-      const cleanId = createEventId.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '');
+      // We do NOT silently strip symbols anymore. We check the raw input (lowercased/trimmed)
+      const rawId = createEventId.trim().toLowerCase();
+      
       const validation = CreateEventSchema.safeParse({
-          competitionId: cleanId,
+          competitionId: rawId,
           organizerPass: createOrgPass,
           judgePass: createEventPass
       });
@@ -172,6 +173,8 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
           setActionLoading(false);
           return;
       }
+
+      const cleanId = rawId; // Proceed with the validated ID
 
       try {
           const exists = await SyncService.checkEventExists(cleanId);
@@ -213,7 +216,7 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
               judgePass: createEventPass,
               rubric: COMPETITION_TEMPLATES[0].rubric,
               tieBreakers: [],
-              isSetupComplete: false,
+              isSetupComplete: false, // Ensure this starts as false
               organizerId: initialUser.id,
               visibility: 'public', 
               registration: 'closed'
@@ -227,6 +230,7 @@ const UserPortal: React.FC<PortalProps> = ({ initialUser, onEnterEvent, onAdminL
               setCreateEventPass('');
               setCreateOrgPass('');
               setSuccessMsg(`Event '${cleanId}' created successfully!`);
+              // Passing newConfig ensures EventContext sees isSetupComplete: false immediately
               onEnterEvent('organizer', cleanId, newConfig, initialUser);
           } else {
               setError(`Failed to create event: ${res.message}`);

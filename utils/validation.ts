@@ -1,4 +1,3 @@
-
 import { z } from 'zod';
 
 // Schema for Creating an Event
@@ -6,7 +5,7 @@ export const CreateEventSchema = z.object({
   competitionId: z.string()
     .min(3, "Event ID must be at least 3 characters")
     .max(20, "Event ID must be under 20 characters")
-    .regex(/^[a-z0-9-_]+$/, "Event ID can only contain lowercase letters, numbers, and dashes"),
+    .regex(/^[a-z0-9-_]+$/, "Event ID can only contain lowercase letters, numbers, dashes, and underscores"),
   organizerPass: z.string().min(4, "Organizer Key must be at least 4 characters"),
   judgePass: z.string().min(3, "Judge Key must be at least 3 characters"),
 });
