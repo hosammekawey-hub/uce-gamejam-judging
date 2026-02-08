@@ -1,10 +1,8 @@
 
 import { createClient, RealtimeChannel, AuthChangeEvent, Session } from '@supabase/supabase-js';
-import { Rating, Contestant, CompetitionConfig, GlobalSettings, Judge, UserProfile } from '../types';
+import { Rating, Contestant, CompetitionConfig, GlobalSettings, Judge, UserProfile, SystemAdmin } from '../types';
 
 // --- CONFIGURATION ---
-// We use a fallback to prevent the app from crashing synchronously if variables are missing.
-// Authentication calls will simply fail gracefully in the UI.
 
 // Safely access environment variables
 const getEnv = (key: string) => {
@@ -31,8 +29,6 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 });
 
 // CRITICAL: Explicitly select only non-sensitive columns.
-// Never select 'organizer_pass' or 'judge_pass' directly in the frontend.
-// Added is_setup_complete to the selection list.
 const SAFE_EVENT_COLUMNS = 'id, title, description, rubric, tie_breakers, visibility, view_pass, registration, organizer_id, is_setup_complete, created_at, updated_at';
 
 export const SyncService = {
@@ -85,10 +81,62 @@ export const SyncService = {
               avatar_url: user.user_metadata.avatar_url
           };
       } catch (err) {
-          // If in placeholder mode, this will fail, which is expected.
           console.debug("getCurrentUser check failed (expected if offline/no-credentials).");
           return null;
       }
+  },
+
+  // --- SYSTEM ADMIN MANAGEMENT (DB BACKED) ---
+
+  async isSystemAdmin(email: string): Promise<boolean> {
+      if (!email) return false;
+      // RLS ensures we can only find the record if we are allowed to see it
+      const { data, error } = await supabase
+        .from('system_admins')
+        .select('email')
+        .eq('email', email)
+        .single();
+      
+      return !!data && !error;
+  },
+
+  async getSystemAdmins(): Promise<SystemAdmin[]> {
+      const { data, error } = await supabase
+        .from('system_admins')
+        .select('*')
+        .order('role', { ascending: false }) // Master first ('master' > 'admin' alphabetically no, but close enough, usually explicit sort is better)
+        .order('created_at', { ascending: true });
+      
+      if (error) {
+          console.error("Failed to fetch admins:", error);
+          return [];
+      }
+      return data as SystemAdmin[];
+  },
+
+  async addSystemAdmin(email: string): Promise<{ success: boolean; message?: string }> {
+      const { error } = await supabase
+        .from('system_admins')
+        .insert({ email: email.toLowerCase(), role: 'admin' });
+      
+      if (error) return { success: false, message: error.message };
+      return { success: true };
+  },
+
+  async removeSystemAdmin(email: string): Promise<boolean> {
+      const { error } = await supabase
+        .from('system_admins')
+        .delete()
+        .eq('email', email);
+      
+      return !error;
+  },
+
+  async transferMasterRole(newMasterEmail: string): Promise<{ success: boolean; message?: string }> {
+      const { error } = await supabase.rpc('transfer_master_role', { new_master_email: newMasterEmail });
+      
+      if (error) return { success: false, message: error.message };
+      return { success: true };
   },
 
   // --- GLOBAL SETTINGS ---

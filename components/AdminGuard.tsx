@@ -1,43 +1,40 @@
 
 import React, { useState, useEffect } from 'react';
-
-// Safely access environment variables to prevent crashes if import.meta.env is undefined
-const getEnv = (key: string) => {
-    if (typeof import.meta !== 'undefined' && import.meta.env) {
-        return import.meta.env[key];
-    }
-    return undefined;
-};
-
-// In a real app, this would be an environment variable.
-// For this jam/demo, we use a hardcoded fallback.
-const MASTER_ADMIN_KEY = getEnv('VITE_ADMIN_KEY') || 'admin-master';
+import { useAuth } from '../contexts/AuthContext';
+import { SyncService } from '../services/syncService';
 
 export const AdminGuard: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [inputKey, setInputKey] = useState('');
-  const [error, setError] = useState('');
+  const { user, loading: authLoading, signInWithGoogle } = useAuth();
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [checkingDb, setCheckingDb] = useState(true);
 
-  // Check session storage on mount to persist login during refresh
   useEffect(() => {
-    if (sessionStorage.getItem('admin_token') === 'valid') {
-        setIsAuthenticated(true);
-    }
-  }, []);
+    const checkAccess = async () => {
+        if (!authLoading) {
+            if (user && user.email) {
+                const authorized = await SyncService.isSystemAdmin(user.email);
+                setIsAdmin(authorized);
+            } else {
+                setIsAdmin(false);
+            }
+            setCheckingDb(false);
+        }
+    };
+    checkAccess();
+  }, [user, authLoading]);
 
-  const handleLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (inputKey === MASTER_ADMIN_KEY) {
-        setIsAuthenticated(true);
-        sessionStorage.setItem('admin_token', 'valid');
-        setError('');
-    } else {
-        setError('Access Denied: Invalid Master Key');
-        setInputKey('');
-    }
-  };
+  if (authLoading || checkingDb) {
+      return (
+        <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+            <div className="flex flex-col items-center gap-4">
+                <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+                <div className="text-indigo-500 font-bold text-xs uppercase tracking-widest">Verifying Identity...</div>
+            </div>
+        </div>
+      );
+  }
 
-  if (isAuthenticated) {
+  if (isAdmin) {
     return <>{children}</>;
   }
 
@@ -51,40 +48,44 @@ export const AdminGuard: React.FC<{ children: React.ReactNode }> = ({ children }
                     🛡️
                 </div>
                 <h1 className="text-2xl font-black text-white tracking-tight">System Admin</h1>
-                <p className="text-slate-500 text-xs font-bold uppercase tracking-widest mt-2">Authorized Personnel Only</p>
+                <p className="text-slate-500 text-xs font-bold uppercase tracking-widest mt-2">Restricted Access</p>
             </div>
 
-            <form onSubmit={handleLogin} className="space-y-6">
-                <div className="space-y-2">
-                    <input 
-                        type="password"
-                        value={inputKey}
-                        onChange={(e) => setInputKey(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-700 rounded-xl px-6 py-4 text-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none text-center font-bold tracking-widest placeholder-slate-600 transition-all"
-                        placeholder="Enter Master Key"
-                        autoFocus
-                    />
-                </div>
-                
-                {error && (
-                    <div className="p-3 bg-rose-500/10 border border-rose-500/20 rounded-xl text-rose-400 text-[10px] font-black uppercase tracking-widest text-center animate-shake">
-                        {error}
+            <div className="space-y-6">
+                {user ? (
+                    <div className="bg-slate-950 border border-slate-700 p-6 rounded-2xl text-center space-y-4">
+                         <div>
+                            <p className="text-[10px] uppercase font-black text-slate-500 mb-1">Logged in as</p>
+                            <p className="text-white font-bold text-sm">{user.email}</p>
+                         </div>
+                         <div className="bg-rose-500/10 border border-rose-500/20 p-3 rounded-xl">
+                            <p className="text-[10px] text-rose-400 font-bold uppercase tracking-widest">⛔ Access Denied</p>
+                            <p className="text-[10px] text-rose-300 mt-1">This account is not listed in the System Admins registry.</p>
+                         </div>
+                    </div>
+                ) : (
+                    <div className="bg-slate-950 border border-slate-700 p-6 rounded-2xl text-center">
+                        <p className="text-xs text-slate-400 leading-relaxed">
+                            This area is restricted to authorized personnel only. Please sign in with your verified administrative account.
+                        </p>
                     </div>
                 )}
 
-                <button 
-                    type="submit"
-                    className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 text-white font-black uppercase tracking-[0.2em] text-xs rounded-xl shadow-lg shadow-indigo-600/20 transition-all active:scale-95"
-                >
-                    Unlock System
-                </button>
+                {!user && (
+                    <button 
+                        onClick={() => signInWithGoogle()}
+                        className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 text-white font-black uppercase tracking-[0.2em] text-xs rounded-xl shadow-lg shadow-indigo-600/20 transition-all active:scale-95 flex items-center justify-center gap-3"
+                    >
+                        Sign in to Access
+                    </button>
+                )}
 
-                <div className="text-center">
+                <div className="text-center pt-4">
                     <a href="/" className="text-slate-600 hover:text-white text-[10px] font-bold uppercase tracking-widest transition-colors">
                         ← Return to Portal
                     </a>
                 </div>
-            </form>
+            </div>
         </div>
     </div>
   );

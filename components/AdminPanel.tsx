@@ -1,8 +1,9 @@
 
 import React, { useState, useEffect } from 'react';
-import { GlobalSettings, CompetitionTemplate, Criterion } from '../types';
+import { GlobalSettings, CompetitionTemplate, Criterion, SystemAdmin } from '../types';
 import { SyncService } from '../services/syncService';
 import { DEFAULT_RUBRIC } from '../constants';
+import { useAuth } from '../contexts/AuthContext';
 
 interface AdminPanelProps {
   initialSettings: GlobalSettings;
@@ -11,7 +12,8 @@ interface AdminPanelProps {
 }
 
 const AdminPanel: React.FC<AdminPanelProps> = ({ initialSettings, onUpdateSettings, onLogout }) => {
-  const [activeTab, setActiveTab] = useState<'events' | 'templates'>('events');
+  const { user } = useAuth();
+  const [activeTab, setActiveTab] = useState<'events' | 'templates' | 'admins'>('events');
   const [settings, setSettings] = useState<GlobalSettings>(initialSettings);
   const [isSaving, setIsSaving] = useState(false);
   const [statusMsg, setStatusMsg] = useState('');
@@ -19,6 +21,15 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ initialSettings, onUpdateSettin
   // Event Inspector State
   const [allEvents, setAllEvents] = useState<any[]>([]);
   const [isLoadingEvents, setIsLoadingEvents] = useState(false);
+
+  // Admin Management State
+  const [adminList, setAdminList] = useState<SystemAdmin[]>([]);
+  const [newAdminEmail, setNewAdminEmail] = useState('');
+  const [isLoadingAdmins, setIsLoadingAdmins] = useState(false);
+
+  // Derived Access State
+  const currentAdmin = adminList.find(a => a.email === user?.email);
+  const isMaster = currentAdmin?.role === 'master';
 
   // Template Builder State
   const [isEditorOpen, setIsEditorOpen] = useState(false);
@@ -34,6 +45,8 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ initialSettings, onUpdateSettin
   useEffect(() => {
       if (activeTab === 'events') {
           loadEvents();
+      } else if (activeTab === 'admins') {
+          loadAdmins();
       }
   }, [activeTab]);
 
@@ -44,10 +57,64 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ initialSettings, onUpdateSettin
       setIsLoadingEvents(false);
   };
 
+  const loadAdmins = async () => {
+      setIsLoadingAdmins(true);
+      const admins = await SyncService.getSystemAdmins();
+      setAdminList(admins);
+      setIsLoadingAdmins(false);
+  }
+
+  const handleAddAdmin = async (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!isMaster) {
+          alert("Only the Master SysAdmin can add new admins.");
+          return;
+      }
+      if (!newAdminEmail.includes('@')) return;
+      
+      const res = await SyncService.addSystemAdmin(newAdminEmail);
+      if (res.success) {
+          setNewAdminEmail('');
+          loadAdmins();
+          setStatusMsg('Admin added successfully.');
+      } else {
+          setStatusMsg(res.message || 'Failed to add admin.');
+      }
+      setTimeout(() => setStatusMsg(''), 3000);
+  };
+
+  const handleRemoveAdmin = async (email: string) => {
+      if (!isMaster) return;
+      if (email === user?.email) {
+          alert("You cannot remove your own admin access.");
+          return;
+      }
+      if (window.confirm(`Revoke System Admin access for ${email}?`)) {
+          const success = await SyncService.removeSystemAdmin(email);
+          if (success) {
+              loadAdmins();
+          } else {
+              alert("Failed to remove admin. Ensure you are the Master Admin.");
+          }
+      }
+  };
+
+  const handlePromoteToMaster = async (email: string) => {
+      if (!isMaster) return;
+      if (window.confirm(`DANGER: Are you sure you want to transfer ownership to ${email}? You will lose Master privileges and become a regular admin.`)) {
+          const res = await SyncService.transferMasterRole(email);
+          if (res.success) {
+              alert("Ownership Transferred.");
+              // Reload page to reflect permission changes (simple way to refresh UI state)
+              window.location.reload();
+          } else {
+              alert(`Failed to transfer ownership: ${res.message}`);
+          }
+      }
+  };
+
   const handleDeleteEvent = async (id: string) => {
       if (window.confirm(`DANGER: Are you sure you want to completely nuke event '${id}'? This cannot be undone.`)) {
-          // Admin can delete without password by passing a special flag or just using RLS if configured (here we use the RPC which usually requires a pass, but let's assume admin has DB access or we update RPC later. For now, we simulate success or use SyncService's existing delete which might fail if we don't have the organizer pass.
-          // Note: Real admin panel should use a specific admin RPC. For this prototype, we'll try the standard delete.
           const success = await SyncService.deleteEvent(id); 
           if (success) {
               setAllEvents(prev => prev.filter(e => e.id !== id));
@@ -145,12 +212,20 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ initialSettings, onUpdateSettin
             <h1 className="text-4xl font-black tracking-tight text-white mb-2">System Admin</h1>
             <p className="text-slate-500 font-bold">Global control panel & oversight.</p>
           </div>
-          <button 
-            onClick={onLogout}
-            className="px-6 py-3 bg-slate-900 border border-slate-700 hover:bg-rose-900/50 hover:text-rose-200 hover:border-rose-900 rounded-xl font-black text-xs uppercase tracking-widest transition-all"
-          >
-            Logout
-          </button>
+          <div className="flex items-center gap-4">
+              <div className="text-right hidden sm:block">
+                  <p className="text-xs font-black text-white">{user?.email}</p>
+                  <p className={`text-[10px] font-bold uppercase tracking-widest ${isMaster ? 'text-amber-400' : 'text-emerald-400'}`}>
+                    {isMaster ? 'Master SysAdmin' : 'Admin'}
+                  </p>
+              </div>
+              <button 
+                onClick={onLogout}
+                className="px-6 py-3 bg-slate-900 border border-slate-700 hover:bg-rose-900/50 hover:text-rose-200 hover:border-rose-900 rounded-xl font-black text-xs uppercase tracking-widest transition-all"
+              >
+                Logout
+              </button>
+          </div>
         </div>
 
         {/* Navigation */}
@@ -166,6 +241,12 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ initialSettings, onUpdateSettin
                 className={`px-6 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all border ${activeTab === 'templates' ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-slate-900 text-slate-500 border-slate-800 hover:border-slate-600'}`}
             >
                 Templates
+            </button>
+            <button 
+                onClick={() => setActiveTab('admins')}
+                className={`px-6 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all border ${activeTab === 'admins' ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-slate-900 text-slate-500 border-slate-800 hover:border-slate-600'}`}
+            >
+                Manage Admins
             </button>
             
             {activeTab === 'templates' && (
@@ -229,6 +310,87 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ initialSettings, onUpdateSettin
                             </table>
                         </div>
                     )}
+                </div>
+            </div>
+        )}
+
+        {/* ADMINS TAB */}
+        {activeTab === 'admins' && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-slideUp">
+                <div className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-[2.5rem] p-8">
+                     <div className="flex justify-between items-center mb-6 px-2">
+                        <h3 className="text-xl font-black text-white">Authorized Administrators</h3>
+                        <button onClick={loadAdmins} className="text-[10px] font-black uppercase tracking-widest text-indigo-400 hover:text-white">Refresh</button>
+                    </div>
+                    {isLoadingAdmins ? (
+                         <div className="py-20 text-center text-slate-500 font-bold animate-pulse">Loading admins...</div>
+                    ) : (
+                        <div className="space-y-4">
+                            {adminList.map(admin => (
+                                <div key={admin.email} className={`flex justify-between items-center p-4 rounded-xl border transition-all ${admin.role === 'master' ? 'bg-amber-900/10 border-amber-500/30' : 'bg-slate-950 border-slate-800'}`}>
+                                    <div className="flex items-center gap-4">
+                                        <div className={`w-10 h-10 rounded-full flex items-center justify-center font-black text-sm ${admin.role === 'master' ? 'bg-amber-500 text-black' : 'bg-slate-800 text-slate-400'}`}>
+                                            {admin.email.charAt(0).toUpperCase()}
+                                        </div>
+                                        <div>
+                                            <p className={`font-bold text-sm flex items-center gap-2 ${admin.role === 'master' ? 'text-amber-400' : 'text-white'}`}>
+                                                {admin.email}
+                                                {admin.role === 'master' && <span className="text-[9px] bg-amber-500 text-black px-1.5 rounded font-black uppercase tracking-wider">Master</span>}
+                                            </p>
+                                            <p className="text-[10px] text-slate-500 font-mono">Added: {new Date(admin.created_at).toLocaleDateString()}</p>
+                                        </div>
+                                    </div>
+                                    
+                                    {/* Action Buttons */}
+                                    {isMaster && admin.role !== 'master' && (
+                                        <div className="flex gap-2">
+                                             <button 
+                                                onClick={() => handlePromoteToMaster(admin.email)}
+                                                className="px-3 py-2 bg-slate-900 text-amber-500 hover:bg-amber-900/50 border border-slate-800 hover:border-amber-500/50 rounded-lg text-[9px] font-black uppercase tracking-widest transition-colors"
+                                                title="Transfer Ownership"
+                                            >
+                                                Make Master
+                                            </button>
+                                            <button 
+                                                onClick={() => handleRemoveAdmin(admin.email)}
+                                                className="px-3 py-2 bg-slate-900 text-rose-500 hover:bg-rose-900 hover:text-white border border-slate-800 hover:border-rose-900 rounded-lg text-[9px] font-black uppercase tracking-widest transition-colors"
+                                            >
+                                                Revoke
+                                            </button>
+                                        </div>
+                                    )}
+                                    
+                                    {admin.email === user?.email && !isMaster && (
+                                        <span className="px-4 py-2 bg-indigo-900/20 text-indigo-400 rounded-lg text-[10px] font-black uppercase tracking-widest border border-indigo-900/50">
+                                            You
+                                        </span>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                <div className={`bg-slate-900 border border-slate-800 rounded-[2.5rem] p-8 h-fit ${!isMaster ? 'opacity-50 pointer-events-none grayscale' : ''}`}>
+                    <h3 className="text-xl font-black text-white mb-2">Grant Access</h3>
+                    <p className="text-slate-400 text-xs mb-6">
+                        {isMaster ? 'Add a new user by email. They must log in with Google to access the panel.' : 'Only the Master SysAdmin can add new administrators.'}
+                    </p>
+                    
+                    <form onSubmit={handleAddAdmin} className="space-y-4">
+                        <input 
+                            type="email"
+                            value={newAdminEmail}
+                            onChange={e => setNewAdminEmail(e.target.value)}
+                            placeholder="admin@example.com"
+                            className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-white focus:border-emerald-500 outline-none"
+                            required
+                            disabled={!isMaster}
+                        />
+                        <button type="submit" disabled={!isMaster} className="w-full py-4 bg-emerald-600 hover:bg-emerald-500 text-white font-black uppercase tracking-widest rounded-xl transition-all shadow-lg text-xs disabled:cursor-not-allowed">
+                            Add Administrator
+                        </button>
+                    </form>
                 </div>
             </div>
         )}

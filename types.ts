@@ -8,6 +8,12 @@ export interface UserProfile {
   avatar_url?: string;
 }
 
+export interface SystemAdmin {
+    email: string;
+    role: 'master' | 'admin';
+    created_at: string;
+}
+
 export interface Criterion {
   id: string;
   name: string;
