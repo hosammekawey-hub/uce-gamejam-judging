@@ -49,28 +49,43 @@ const calculateUserRole = (
     
     const capabilities: UserRole[] = [];
 
+    // 1. Determine Strict Capabilities
+    
     // Is Organizer?
     const isOrgAuth = user && config.organizerId && user.id === config.organizerId;
     const isOrgGuest = !!sessionStorage.getItem(`org_${eventId}`);
-    if (isOrgAuth || isOrgGuest) capabilities.push('organizer');
+    
+    if (isOrgAuth || isOrgGuest) {
+        capabilities.push('organizer');
+    }
 
-    // Is Judge?
-    const isJudge = user && judges.some(j => j.userId === user.id);
-    if (isJudge) capabilities.push('judge');
+    // Is Judge? (Strict check: Must be in judges list)
+    if (user && judges.some(j => j.userId === user.id)) {
+        capabilities.push('judge');
+    }
 
-    // Is Contestant?
-    const isContestant = user && contestants.some(c => c.userId === user.id);
-    if (isContestant) capabilities.push('contestant');
+    // Is Contestant? (Strict check: Must be in contestants list)
+    if (user && contestants.some(c => c.userId === user.id)) {
+        capabilities.push('contestant');
+    }
 
     capabilities.push('viewer');
 
+    // 2. Select Role based on Priority
     let finalRole: UserRole = 'viewer';
 
+    // Priority 1: Navigation Intent (Portal Choice)
+    // We honor this if the user has the capability.
     if (preferredRole && capabilities.includes(preferredRole)) {
         finalRole = preferredRole;
-    } else if (storedRole && capabilities.includes(storedRole)) {
+    } 
+    // Priority 2: Stored Session (Page Reloads / Deep Linking)
+    // We honor this if the user has the capability.
+    else if (storedRole && capabilities.includes(storedRole)) {
         finalRole = storedRole;
-    } else {
+    } 
+    // Priority 3: Default Hierarchy (Organizer > Judge > Contestant > Viewer)
+    else {
         if (capabilities.includes('organizer')) finalRole = 'organizer';
         else if (capabilities.includes('judge')) finalRole = 'judge';
         else if (capabilities.includes('contestant')) finalRole = 'contestant';
@@ -82,7 +97,7 @@ const calculateUserRole = (
 
 export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { eventId } = useParams<{ eventId: string }>();
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -124,7 +139,7 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             setRatings(data.ratings);
             setJudges(data.judges);
             
-            // Calculate initial role immediately with current data
+            // Initial Role Calculation
             const role = calculateUserRole(
                 user, 
                 meta, 
@@ -133,7 +148,12 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 eventId, 
                 location.state?.preferredRole
             );
+            
             setUserRole(role);
+            // Only force write to storage if we have explicit intent from navigation state
+            if (location.state?.preferredRole) {
+                sessionStorage.setItem(`role_${eventId}`, role);
+            }
             
             setIsOffline(false);
             setIsLoading(false);
@@ -143,9 +163,6 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         if (subscriptionRef.current) subscriptionRef.current.unsubscribe();
         subscriptionRef.current = SyncService.subscribeToEvent(eventId, {
             onTeamsChange: (payload) => {
-                // Simplified refresh for robust syncing, normally we'd do granular updates
-                // For simplicity in this fix, we just refetch critical parts or apply delta.
-                // Applying delta as before:
                 if (payload.eventType === 'INSERT') {
                      const newTeam = {
                         id: payload.new.id,
@@ -216,10 +233,11 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         isMounted = false;
         if (subscriptionRef.current) subscriptionRef.current.unsubscribe();
     };
-  }, [eventId]); // Run once per eventId change. user dependency handled below.
+  }, [eventId]); 
 
-  // Reactive Role Update (When user auth loads/changes later)
+  // Reactive Role Update
   useEffect(() => {
+      // Don't recalculate if we are essentially still initializing event data
       if (isLoading || !eventId) return;
       
       const role = calculateUserRole(
@@ -228,14 +246,19 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         judges, 
         contestants, 
         eventId, 
-        location.state?.preferredRole
+        location.state?.preferredRole 
       );
       
       if (role !== userRole) {
           setUserRole(role);
-          const sessionKey = `role_${eventId}`;
-          sessionStorage.setItem(sessionKey, role);
       }
+      
+      // CRITICAL FIX: Only overwrite session storage if we have an explicit preference from navigation.
+      // This prevents race conditions where "loading" state (viewer) overwrites a stored "contestant" role.
+      if (location.state?.preferredRole) {
+           sessionStorage.setItem(`role_${eventId}`, role);
+      }
+
   }, [user, config, judges, contestants, eventId, location.state, userRole, isLoading]);
 
   // Actions
@@ -306,7 +329,8 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (config.visibility === 'public') return true;
       if (config.visibility === 'private') {
           if (config.viewPass === pass) return true;
-          // Implicit access check
+          // Implicit access check: If they have a valid role (Organizer/Judge/Contestant), they pass
+          // calculateUserRole guarantees that if they are authenticated as such, they get the role.
           if (userRole !== 'viewer') return true;
           return false;
       }
